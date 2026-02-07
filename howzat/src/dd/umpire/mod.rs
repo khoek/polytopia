@@ -212,6 +212,7 @@ pub struct ConeCtx<N: Num, R: Representation, M: UmpireMatrix<N, R> = LpMatrix<N
     pub(crate) equality_kinds: Vec<InequalityKind>,
     pub(crate) order_vector: Vec<Row>,
     pub(crate) row_to_pos: Vec<Row>,
+    pub(crate) order_epoch: u64,
     pub(crate) lex_order_cache: Option<LexOrderCache>,
     pub(crate) sat_row_to_id: Vec<Option<SatRowId>>,
     pub(crate) sat_id_to_row: Vec<Row>,
@@ -269,6 +270,10 @@ impl<N: Num, R: Representation, M: UmpireMatrix<N, R>> ConeCtx<N, R, M> {
 
     #[inline(always)]
     pub(crate) fn refresh_row_to_pos(&mut self) {
+        self.order_epoch = self.order_epoch.wrapping_add(1);
+        if self.order_epoch == 0 {
+            self.order_epoch = 1;
+        }
         let m = self.matrix().row_count();
         if self.row_to_pos.len() != m {
             self.row_to_pos = vec![m; m];

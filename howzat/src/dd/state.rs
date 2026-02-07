@@ -176,6 +176,7 @@ where
                 equality_kinds,
                 order_vector: Vec::new(),
                 row_to_pos: Vec::new(),
+                order_epoch: 1,
                 lex_order_cache: None,
                 sat_row_to_id: vec![None; m],
                 sat_id_to_row: Vec::new(),

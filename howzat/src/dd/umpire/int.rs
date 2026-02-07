@@ -69,6 +69,8 @@ pub struct IntRay<N: Rat, ZS: ZeroSet = crate::dd::SatSet> {
     pub(crate) zero_set_sig: u64,
     pub(crate) zero_set_count: usize,
     pub(crate) first_infeasible_row: Option<Row>,
+    pub(crate) first_infeasible_scan_pos: Row,
+    pub(crate) first_infeasible_scan_epoch: u64,
     pub(crate) feasible: bool,
     pub(crate) weakly_feasible: bool,
     pub(crate) last_eval_row: Option<Row>,
@@ -141,6 +143,8 @@ impl<N: Rat, ZS: ZeroSet> crate::dd::ray::RayData for IntRay<N, ZS> {
     #[inline(always)]
     fn set_first_infeasible_row(&mut self, row: Option<Row>) {
         self.first_infeasible_row = row;
+        self.first_infeasible_scan_pos = 0;
+        self.first_infeasible_scan_epoch = 0;
     }
 
     #[inline(always)]
@@ -455,6 +459,9 @@ impl<N: Rat, E: Epsilon<N>, H: HalfspacePolicy<N>> IntUmpire<N, E, H> {
         }
 
         let zero_set_sig = zero_set.signature_u64();
+        let first_infeasible_scan_pos = first_infeasible_row
+            .and_then(|row| cone.row_to_pos.get(row).copied())
+            .unwrap_or(m);
         let ray_data = IntRay {
             vector,
             row_signs,
@@ -462,6 +469,8 @@ impl<N: Rat, E: Epsilon<N>, H: HalfspacePolicy<N>> IntUmpire<N, E, H> {
             zero_set_sig,
             zero_set_count,
             first_infeasible_row,
+            first_infeasible_scan_pos,
+            first_infeasible_scan_epoch: cone.order_epoch,
             feasible,
             weakly_feasible,
             last_eval_row,
@@ -1023,6 +1032,8 @@ impl<N: Rat, E: Epsilon<N>, H: HalfspacePolicy<N>, ZR: crate::dd::mode::Preorder
         self.vector_pool.push(old_vector);
         ray_data.vector = new_vector;
         ray_data.row_signs.clear();
+        ray_data.first_infeasible_scan_pos = 0;
+        ray_data.first_infeasible_scan_epoch = 0;
         ray_data.last_eval_row = None;
         ray_data.last_eval = N::Int::zero();
         ray_data.last_sign = Sign::Zero;
@@ -1201,20 +1212,45 @@ impl<N: Rat, E: Epsilon<N>, H: HalfspacePolicy<N>, ZR: crate::dd::mode::Preorder
     ) {
         if ray_data.weakly_feasible {
             ray_data.first_infeasible_row = None;
+            ray_data.first_infeasible_scan_pos = cone.matrix().row_count();
+            ray_data.first_infeasible_scan_epoch = cone.order_epoch;
             return;
         }
 
+        let m = cone.order_vector.len();
+        if ray_data.first_infeasible_scan_epoch == cone.order_epoch
+            && let Some(row) = ray_data.first_infeasible_row
+            && row < cone.equality_kinds.len()
+        {
+            self.dot_int_in_acc(cone, row, &ray_data.vector);
+            let sign = Self::int_sign(&self.dot_acc);
+            if cone.equality_kinds[row].weakly_violates_sign(sign, relaxed) {
+                ray_data.first_infeasible_scan_pos = cone.row_to_pos.get(row).copied().unwrap_or(m);
+                return;
+            }
+        }
+
+        let start_pos = if ray_data.first_infeasible_scan_epoch == cone.order_epoch {
+            ray_data.first_infeasible_scan_pos.min(m)
+        } else {
+            0
+        };
+
         let mut first = None;
-        for &row_idx in &cone.order_vector {
+        let mut first_pos = m;
+        for (pos, &row_idx) in cone.order_vector.iter().enumerate().skip(start_pos) {
             self.dot_int_in_acc(cone, row_idx, &ray_data.vector);
             let sign = Self::int_sign(&self.dot_acc);
             let kind = cone.equality_kinds[row_idx];
             if kind.weakly_violates_sign(sign, relaxed) {
                 first = Some(row_idx);
+                first_pos = pos;
                 break;
             }
         }
         ray_data.first_infeasible_row = first;
+        ray_data.first_infeasible_scan_pos = first_pos;
+        ray_data.first_infeasible_scan_epoch = cone.order_epoch;
     }
 
     fn reclassify_ray<R: Representation>(
@@ -1275,6 +1311,11 @@ impl<N: Rat, E: Epsilon<N>, H: HalfspacePolicy<N>, ZR: crate::dd::mode::Preorder
 
         ray_data.zero_set_sig = ray_data.zero_set.signature_u64();
         ray_data.zero_set_count = zero_set_count;
+        ray_data.first_infeasible_scan_pos = ray_data
+            .first_infeasible_row
+            .and_then(|row| cone.row_to_pos.get(row).copied())
+            .unwrap_or(m);
+        ray_data.first_infeasible_scan_epoch = cone.order_epoch;
         ray_data.last_eval_row = last_eval_row;
         ray_data.last_eval = last_eval;
         ray_data.last_sign = last_sign;

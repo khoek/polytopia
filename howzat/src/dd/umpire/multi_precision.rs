@@ -831,6 +831,7 @@ mod tests {
             equality_kinds: vec![InequalityKind::Inequality],
             order_vector: vec![0],
             row_to_pos: vec![0],
+            order_epoch: 1,
             lex_order_cache: None,
             sat_row_to_id: vec![Some(0usize.into())],
             sat_id_to_row: vec![0],

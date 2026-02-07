@@ -408,6 +408,15 @@ impl<N: Rat, E: Epsilon<N>, H: HalfspacePolicy<N>> IntUmpire<N, E, H> {
         let mut last_sign = Sign::Zero;
 
         for &row_idx in &cone.order_vector {
+            let row_id = <ZR as ZeroRepr>::id_for_row(cone, row_idx);
+            if seeded_zero_set
+                && first_infeasible_row.is_some()
+                && row_id.is_none()
+                && Some(row_idx) != last_row
+            {
+                continue;
+            }
+
             let sign = if let Some(preseeded) = row_signs[row_idx] {
                 if preseeded == Sign::Zero {
                     N::Int::assign_from(&mut self.dot_acc, &N::Int::zero());
@@ -435,7 +444,7 @@ impl<N: Rat, E: Epsilon<N>, H: HalfspacePolicy<N>> IntUmpire<N, E, H> {
             }
 
             if sign == Sign::Zero
-                && let Some(id) = <ZR as ZeroRepr>::id_for_row(cone, row_idx)
+                && let Some(id) = row_id
                 && !zero_set.contains(id)
             {
                 zero_set.insert(id);

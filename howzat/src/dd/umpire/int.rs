@@ -1,4 +1,5 @@
 use crate::HowzatError as Error;
+use crate::dd::ray::RayData;
 use crate::dd::RayId;
 use crate::dd::zero::{ZeroRepr, ZeroSet};
 use crate::matrix::{LpMatrix, MatrixRank};
@@ -340,14 +341,17 @@ impl<N: Rat, E: Epsilon<N>, H: HalfspacePolicy<N>> IntUmpire<N, E, H> {
         relaxed: bool,
         last_row: Option<Row>,
         mut zero_set: <ZR as ZeroRepr>::Set,
+        seeded_zero_set: bool,
     ) -> H::WrappedRayData<IntRay<N, <ZR as ZeroRepr>::Set>> {
         let m = cone.matrix().row_count();
         let mut negative_rows = self.halfspace.take_negative_rows(m);
         let track_negatives = negative_rows.len() == m;
 
         zero_set.ensure_domain(m);
-        zero_set.clear();
-        let mut zero_set_count = 0usize;
+        if !seeded_zero_set {
+            zero_set.clear();
+        }
+        let mut zero_set_count = zero_set.cardinality();
         let mut feasible = true;
         let mut weakly_feasible = true;
         let mut first_infeasible_row = None;
@@ -357,8 +361,15 @@ impl<N: Rat, E: Epsilon<N>, H: HalfspacePolicy<N>> IntUmpire<N, E, H> {
         let mut last_sign = Sign::Zero;
 
         for &row_idx in &cone.order_vector {
-            self.dot_int_in_acc(cone, row_idx, &vector);
-            let sign = Self::int_sign(&self.dot_acc);
+            let sign = if seeded_zero_set
+                && <ZR as ZeroRepr>::zero_set_contains_row(cone, &zero_set, row_idx)
+            {
+                N::Int::assign_from(&mut self.dot_acc, &N::Int::zero());
+                Sign::Zero
+            } else {
+                self.dot_int_in_acc(cone, row_idx, &vector);
+                Self::int_sign(&self.dot_acc)
+            };
             if track_negatives && sign == Sign::Negative {
                 negative_rows.insert(row_idx);
             }
@@ -370,6 +381,7 @@ impl<N: Rat, E: Epsilon<N>, H: HalfspacePolicy<N>> IntUmpire<N, E, H> {
 
             if sign == Sign::Zero
                 && let Some(id) = <ZR as ZeroRepr>::id_for_row(cone, row_idx)
+                && !zero_set.contains(id)
             {
                 zero_set.insert(id);
                 zero_set_count += 1;
@@ -1069,7 +1081,7 @@ impl<N: Rat, E: Epsilon<N>, H: HalfspacePolicy<N>, ZR: crate::dd::mode::Preorder
         zero_set: <ZR as ZeroRepr>::Set,
     ) -> Self::RayData {
         Self::normalize_vector_in_place(&mut vector);
-        self.build_ray_from_vector::<ZR, R>(cone, vector, relaxed, last_row, zero_set)
+        self.build_ray_from_vector::<ZR, R>(cone, vector, relaxed, last_row, zero_set, false)
     }
 
     fn sign_sets_for_ray<R: Representation>(
@@ -1194,6 +1206,13 @@ impl<N: Rat, E: Epsilon<N>, H: HalfspacePolicy<N>, ZR: crate::dd::mode::Preorder
         zero_set: <ZR as ZeroRepr>::Set,
     ) -> Result<Self::RayData, <ZR as ZeroRepr>::Set> {
         let (_id1, ray1, _id2, ray2) = parents;
+        let mut inherited_zero_set = zero_set;
+        inherited_zero_set.ensure_domain(cone.matrix().row_count());
+        inherited_zero_set.copy_from(ray1.zero_set());
+        inherited_zero_set.intersection_inplace(ray2.zero_set());
+        if let Some(id) = <ZR as ZeroRepr>::id_for_row(cone, row) {
+            inherited_zero_set.insert(id);
+        }
 
         let (val1, val2) = match (
             ray1.last_eval_row == Some(row),
@@ -1214,7 +1233,7 @@ impl<N: Rat, E: Epsilon<N>, H: HalfspacePolicy<N>, ZR: crate::dd::mode::Preorder
         let mut a1 = val1.abs().expect("exact ray generation requires abs");
         let mut a2 = val2.abs().expect("exact ray generation requires abs");
         if a1.is_zero() && a2.is_zero() {
-            return Err(zero_set);
+            return Err(inherited_zero_set);
         }
 
         let mut g = a1.clone();
@@ -1230,7 +1249,7 @@ impl<N: Rat, E: Epsilon<N>, H: HalfspacePolicy<N>, ZR: crate::dd::mode::Preorder
 
         let dim = ray1.vector().len();
         if dim != ray2.vector().len() {
-            return Err(zero_set);
+            return Err(inherited_zero_set);
         }
 
         let mut new_vector = self.take_vector(dim);
@@ -1249,7 +1268,7 @@ impl<N: Rat, E: Epsilon<N>, H: HalfspacePolicy<N>, ZR: crate::dd::mode::Preorder
 
         if !Self::normalize_vector_in_place(&mut new_vector) {
             self.vector_pool.push(new_vector);
-            return Err(zero_set);
+            return Err(inherited_zero_set);
         }
 
         Ok(self.build_ray_from_vector::<ZR, R>(
@@ -1257,7 +1276,8 @@ impl<N: Rat, E: Epsilon<N>, H: HalfspacePolicy<N>, ZR: crate::dd::mode::Preorder
             new_vector,
             relaxed,
             Some(row),
-            zero_set,
+            inherited_zero_set,
+            true,
         ))
     }
 }

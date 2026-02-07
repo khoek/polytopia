@@ -444,9 +444,13 @@ where
         };
 
         self.core.adj_face.copy_from(ray1_zero);
-        let common = self.core.adj_face.intersection_inplace_and_count(ray2_zero);
-
         let required = self.adjacency_dimension().saturating_sub(2);
+        let min_parent_saturators = ray1_zero_count.min(ray2_zero_count);
+        if min_parent_saturators < required {
+            return false;
+        }
+
+        let common = self.core.adj_face.intersection_inplace_and_count(ray2_zero);
         if common < required {
             return false;
         }
@@ -455,8 +459,7 @@ where
             return true;
         }
 
-        let min_parent_saturators = ray1_zero_count.min(ray2_zero_count);
-        if common == required && min_parent_saturators == required + 1 {
+        if min_parent_saturators == common.saturating_add(1) {
             return true;
         }
 

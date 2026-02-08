@@ -564,7 +564,7 @@ dependencies = [
 
 [[package]]
 name = "howzat-ffi-c"
-version = "0.3.1"
+version = "0.3.2"
 dependencies = [
  "calculo",
  "gmp-mpfr-sys",
@@ -575,7 +575,7 @@ dependencies = [
 
 [[package]]
 name = "howzat-ffi-py"
-version = "0.3.1"
+version = "0.3.2"
 dependencies = [
  "calculo",
  "howzat-kit",

@@ -1,11 +1,12 @@
 [package]
 name = "howzat-kit"
-version = "0.3.0"
+version = "0.3.1"
 edition = "2024"
 license = "AGPL-3.0-only"
 description = "Backend spec parsing and high-performance runner API for howzat."
 readme = "README.md"
 publish = true
+repository = "https://github.com/khoek/howzat"
 
 [features]
 default = []
@@ -18,13 +19,13 @@ use-system-gmp = [
 ]
 
 [dependencies]
-howzat = { path = "../howzat", version = "0.3.0" }
-hullabaloo = { path = "../hullabaloo", version = "0.3.0", features = ["serde"] }
-cddlib-rs = { path = "../cddlib-rs", version = "0.3.0", features = ["gmprational"] }
-lrslib-rs = { path = "../lrslib-rs", version = "0.3.0", features = ["gmp"] }
-ppl-rs = { path = "../ppl-rs", version = "0.3.0", default-features = false, features = ["gmp"] }
+howzat = { path = "../howzat", version = "0.3.1" }
+hullabaloo = { path = "../hullabaloo", version = "0.3.1", features = ["serde"] }
+cddlib-rs = { path = "../cddlib-rs", version = "0.3.1", features = ["gmprational"] }
+lrslib-rs = { path = "../lrslib-rs", version = "0.3.1", features = ["gmp"] }
+ppl-rs = { path = "../ppl-rs", version = "0.3.1", default-features = false, features = ["gmp"] }
 
-calculo = { version = "0.3.0" }
+calculo = { version = "0.3.1" }
 gmp-mpfr-sys = { version = "~1.6", default-features = false, optional = true, features = ["use-system-libs"] }
 anyhow = "1"
 serde = { version = "1", features = ["derive"] }

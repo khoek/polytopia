@@ -1,11 +1,11 @@
 [package]
 name = "ppl-rs"
-version = "0.3.0"
+version = "0.3.1"
 edition = "2024"
 license = "AGPL-3.0-only"
 description = "Idiomatic Rust bindings around the Parma Polyhedra Library (PPL)."
 readme = "README.md"
-publish = false
+repository = "https://github.com/khoek/howzat"
 
 [lib]
 name = "ppl_rs"
@@ -20,8 +20,8 @@ use-system-gmp = ["ppl-sys/use-system-gmp"]
 
 [dependencies]
 ppl-sys = { path = "../ppl-sys", version = "0.3.0", default-features = false }
-hullabaloo = { path = "../hullabaloo", version = "0.3.0" }
-calculo = { version = "0.3.0", default-features = false, features = ["rug"] }
+hullabaloo = { path = "../hullabaloo", version = "0.3.1" }
+calculo = { version = "0.3.1", default-features = false, features = ["rug"] }
 
 thiserror = "2"
 libc = "0.2"

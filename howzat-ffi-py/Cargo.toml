@@ -1,11 +1,12 @@
 [package]
 name = "howzat-ffi-py"
-version = "0.3.0"
+version = "0.3.1"
 edition = "2024"
 license = "AGPL-3.0-only"
 description = "PyO3 bindings for howzat backend runner APIs."
 readme = "README.md"
 publish = true
+repository = "https://github.com/khoek/howzat"
 
 [lib]
 crate-type = ["cdylib"]
@@ -15,10 +16,10 @@ default = []
 use-system-gmp = ["howzat-kit/use-system-gmp"]
 
 [dependencies]
-howzat-kit = { path = "../howzat-kit", version = "0.3.0", features = ["pic"] }
-hullabaloo = { path = "../hullabaloo", version = "0.3.0" }
+howzat-kit = { path = "../howzat-kit", version = "0.3.1", features = ["pic"] }
+hullabaloo = { path = "../hullabaloo", version = "0.3.1" }
 
-calculo = { version = "0.3.0" }
+calculo = { version = "0.3.1" }
 numpy = "0.27"
 pyo3 = { version = "0.27", features = ["extension-module"] }
 rug = { version = "1", default-features = false, features = ["integer", "rational", "std"] }

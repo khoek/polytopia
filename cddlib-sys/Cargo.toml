@@ -7,6 +7,7 @@ description = "Raw FFI bindings to cddlib."
 links = "cddlib"
 build = "build.rs"
 readme = "README.md"
+repository = "https://github.com/khoek/howzat"
 
 [lib]
 name = "cddlib_sys"

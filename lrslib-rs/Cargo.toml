@@ -1,10 +1,11 @@
 [package]
 name = "lrslib-rs"
-version = "0.3.0"
+version = "0.3.1"
 edition = "2024"
 license = "AGPL-3.0-only"
 description = "Idiomatic Rust bindings around lrslib."
 readme = "README.md"
+repository = "https://github.com/khoek/howzat"
 
 [lib]
 name = "lrslib_rs"
@@ -17,8 +18,8 @@ use-system-gmp = ["lrslib-sys/use-system-gmp"]
 
 [dependencies]
 lrslib-sys = { path = "../lrslib-sys", version = "0.3.0" }
-hullabaloo = { path = "../hullabaloo", version = "0.3.0" }
-calculo = { version = "0.3.0", default-features = false, features = ["rug"] }
+hullabaloo = { path = "../hullabaloo", version = "0.3.1" }
+calculo = { version = "0.3.1", default-features = false, features = ["rug"] }
 
 gmp-mpfr-sys = { version = "~1.6", default-features = false, optional = true }
 thiserror = "2"
@@ -26,4 +27,4 @@ libc = "0.2"
 rug = { version = "1", default-features = false, features = ["integer", "std"] }
 
 [dev-dependencies]
-cddlib-rs = { path = "../cddlib-rs", version = "0.3.0", features = ["gmprational"] }
+cddlib-rs = { path = "../cddlib-rs", version = "0.3.1", features = ["gmprational"] }

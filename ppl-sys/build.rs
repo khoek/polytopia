@@ -40,6 +40,12 @@ struct PplLayout {
     install_dir: PathBuf,
 }
 
+#[derive(Clone)]
+struct GmpxxBuild {
+    lib_dir: PathBuf,
+    header_dir: PathBuf,
+}
+
 fn main() {
     println!("cargo:rerun-if-changed=build.rs");
     println!("cargo:rerun-if-env-changed=CARGO_FEATURE_GMP");
@@ -56,8 +62,8 @@ fn main() {
     let perf_flags = perf_flags_string(needs_pic);
     let out_dir = syn::out_dir();
 
-    let gmpxx_lib_dir = (coeff_mode == CoeffMode::Gmp && !use_system_gmp)
-        .then(|| ensure_gmpxx_static(&out_dir, &perf_flags));
+    let gmpxx_build =
+        (coeff_mode == CoeffMode::Gmp && !use_system_gmp).then(|| ensure_gmpxx_static(&out_dir, &perf_flags));
 
     let ppl_layout = ppl_layout(coeff_mode, needs_pic);
     println!("cargo:rerun-if-changed={}", ppl_layout.archive_path.display());
@@ -69,7 +75,7 @@ fn main() {
         coeff_mode,
         needs_pic,
         &perf_flags,
-        gmpxx_lib_dir.as_deref(),
+        gmpxx_build.as_ref(),
     );
 
     let include_dir = install_dir.join("include");
@@ -82,9 +88,10 @@ fn main() {
         if use_system_gmp {
             println!("cargo:rustc-link-lib=gmpxx");
         } else {
-            let gmpxx_lib_dir = gmpxx_lib_dir
+            let gmpxx_lib_dir = gmpxx_build
                 .as_ref()
-                .expect("ppl-sys: missing gmpxx build dir")
+                .expect("ppl-sys: missing gmpxx build")
+                .lib_dir
                 .clone();
             println!("cargo:rustc-link-search=native={}", gmpxx_lib_dir.display());
             println!("cargo:rustc-link-lib=static=gmpxx");
@@ -197,7 +204,7 @@ fn build_ppl(
     coeff_mode: CoeffMode,
     needs_pic: bool,
     perf_flags: &str,
-    gmpxx_lib_dir: Option<&Path>,
+    gmpxx_build: Option<&GmpxxBuild>,
 ) -> PathBuf {
     if ppl_install_is_present(&layout.install_dir) {
         return layout.install_dir.clone();
@@ -224,25 +231,23 @@ fn build_ppl(
         .env("lt_cv_truncate_bin", "sed -e 4q");
 
     if coeff_mode == CoeffMode::Gmp && env::var_os("CARGO_FEATURE_USE_SYSTEM_GMP").is_none() {
-        let gmpxx_lib_dir = gmpxx_lib_dir.expect("ppl-sys: missing gmpxx build dir");
+        let gmpxx_build = gmpxx_build.expect("ppl-sys: missing gmpxx build");
         if let Some((gmp_include_dir, gmp_lib_dir)) = gmp_paths() {
-            let gmpxx_header_dir = gmpxx_header_dir();
-            if !gmpxx_header_dir.join("gmpxx.h").is_file() {
+            if !gmpxx_build.header_dir.join("gmpxx.h").is_file() {
                 panic!(
-                    "ppl-sys: missing {} (gmpxx.h); expected gmp-mpfr-sys to keep GMP sources \
-available (enable cnodelete and disable GMP_MPFR_SYS_CACHE).",
-                    gmpxx_header_dir.join("gmpxx.h").display()
+                    "ppl-sys: missing {} (gmpxx.h)",
+                    gmpxx_build.header_dir.join("gmpxx.h").display()
                 );
             }
             let cppflags = format!(
                 "-I{} -I{}",
                 gmp_include_dir.display(),
-                gmpxx_header_dir.display()
+                gmpxx_build.header_dir.display()
             );
             let ldflags = format!(
                 "-L{} -L{}",
                 gmp_lib_dir.display(),
-                gmpxx_lib_dir.display()
+                gmpxx_build.lib_dir.display()
             );
             configure.env("CPPFLAGS", cppflags).env("LDFLAGS", ldflags);
         }
@@ -420,92 +425,131 @@ fn gmp_paths() -> Option<(PathBuf, PathBuf)> {
     }
 }
 
-fn gmp_out_dir() -> PathBuf {
-    PathBuf::from(env::var("DEP_GMP_OUT_DIR").expect("DEP_GMP_OUT_DIR must be set when using GMP"))
+fn dep_gmp_out_dir() -> Option<PathBuf> {
+    env::var_os("DEP_GMP_OUT_DIR").map(PathBuf::from)
 }
 
-fn gmpxx_header_dir() -> PathBuf {
-    gmp_out_dir().join("build").join("gmp-src")
+fn gmp_source_dir_is_valid(path: &Path) -> bool {
+    path.join("configure").is_file() && path.join("gmpxx.h").is_file() && path.join("cxx").is_dir()
 }
 
-fn ensure_gmpxx_static(out_dir: &Path, perf_flags: &str) -> PathBuf {
-    let gmp_out_dir = gmp_out_dir();
-    let gmp_build_dir = gmp_out_dir.join("build").join("gmp-build");
-    let gmp_src_dir = gmp_out_dir.join("build").join("gmp-src");
-    let cxx_src_dir = gmp_src_dir.join("cxx");
-    if !cxx_src_dir.is_dir() {
-        panic!(
-            "ppl-sys: missing GMP C++ sources at {} (expected gmp-mpfr-sys to build from source)",
-            cxx_src_dir.display()
-        );
+fn gmp_source_from_dep_out() -> Option<PathBuf> {
+    let source_dir = dep_gmp_out_dir()?.join("build").join("gmp-src");
+    gmp_source_dir_is_valid(&source_dir).then_some(source_dir)
+}
+
+fn cargo_registry_src_roots() -> Vec<PathBuf> {
+    let mut roots = Vec::new();
+    if let Some(cargo_home) = env::var_os("CARGO_HOME").map(PathBuf::from) {
+        roots.push(cargo_home.join("registry").join("src"));
+    } else if let Some(home) = env::var_os("HOME").map(PathBuf::from) {
+        roots.push(home.join(".cargo").join("registry").join("src"));
     }
-    if !gmp_build_dir.join("config.h").is_file() {
-        panic!(
-            "ppl-sys: missing GMP build configuration at {} (expected gmp-mpfr-sys to keep build dir)",
-            gmp_build_dir.display()
-        );
+    roots
+}
+
+fn read_dir_paths(path: &Path) -> Vec<PathBuf> {
+    let Ok(entries) = fs::read_dir(path) else {
+        return Vec::new();
+    };
+    entries.filter_map(|entry| entry.ok().map(|e| e.path())).collect()
+}
+
+fn find_registry_gmp_source() -> Option<PathBuf> {
+    let mut package_dirs: Vec<PathBuf> = Vec::new();
+    for registry_src in cargo_registry_src_roots() {
+        for index_dir in read_dir_paths(&registry_src) {
+            if !index_dir.is_dir() {
+                continue;
+            }
+            for package_dir in read_dir_paths(&index_dir) {
+                let Some(name) = package_dir.file_name().and_then(|s| s.to_str()) else {
+                    continue;
+                };
+                if name.starts_with("gmp-mpfr-sys-") {
+                    package_dirs.push(package_dir);
+                }
+            }
+        }
+    }
+    package_dirs.sort();
+    package_dirs.reverse();
+
+    for package_dir in package_dirs {
+        let mut sources = read_dir_paths(&package_dir);
+        sources.sort();
+        for source_dir in sources.into_iter().rev() {
+            let Some(name) = source_dir.file_name().and_then(|s| s.to_str()) else {
+                continue;
+            };
+            if name.starts_with("gmp-") && name.ends_with("-c") && gmp_source_dir_is_valid(&source_dir) {
+                return Some(source_dir);
+            }
+        }
+    }
+    None
+}
+
+fn gmp_source_dir() -> PathBuf {
+    if let Some(source_dir) = gmp_source_from_dep_out() {
+        return source_dir;
+    }
+    if let Some(source_dir) = find_registry_gmp_source() {
+        return source_dir;
+    }
+    panic!(
+        "ppl-sys: unable to locate GMP sources with gmpxx.h/cxx (looked in DEP_GMP_OUT_DIR and cargo registry)"
+    );
+}
+
+fn configure_and_build_gmpxx(source_dir: &Path, build_dir: &Path, perf_flags: &str) {
+    fs::create_dir_all(build_dir).expect("ppl-sys: failed to create gmpxx build directory");
+
+    if !build_dir.join("Makefile").is_file() {
+        let mut configure = Command::new(source_dir.join("configure"));
+        configure
+            .arg("--enable-fat")
+            .arg("--disable-shared")
+            .arg("--with-pic")
+            .arg("--enable-cxx")
+            .current_dir(build_dir)
+            .env("CFLAGS", perf_flags)
+            .env("CXXFLAGS", perf_flags);
+
+        if let (Ok(target), Ok(host)) = (env::var("TARGET"), env::var("HOST")) {
+            if target != host {
+                configure.arg(format!("--host={target}"));
+            }
+        }
+
+        syn::run(&mut configure, "ppl-sys: GMP configure for gmpxx failed");
     }
 
-    let build_dir = out_dir.join("gmpxx");
-    fs::create_dir_all(&build_dir).expect("ppl-sys: failed to create gmpxx build dir");
-    let lib_path = build_dir.join("libgmpxx.a");
-    if lib_path.is_file() {
-        return build_dir;
-    }
+    let jobs = syn::parallel_jobs();
+    let mut make = Command::new("make");
+    syn::apply_parallel(&mut make, jobs);
+    make.current_dir(build_dir);
+    syn::run(&mut make, "ppl-sys: GMP build for gmpxx failed");
+}
 
-    let cxx = env::var("CXX").unwrap_or_else(|_| "c++".to_string());
-    let ar = env::var("AR").unwrap_or_else(|_| "ar".to_string());
-
-    let mut sources: Vec<PathBuf> = fs::read_dir(&cxx_src_dir)
-        .unwrap_or_else(|e| panic!("ppl-sys: failed to read {}: {e}", cxx_src_dir.display()))
-        .filter_map(|entry| {
-            let entry = entry.ok()?;
-            let path = entry.path();
-            let is_cc = path
-                .extension()
-                .and_then(|ext| ext.to_str())
-                .is_some_and(|ext| ext == "cc");
-            is_cc.then_some(path)
-        })
-        .collect();
-    sources.sort();
-
-    if sources.is_empty() {
-        panic!(
-            "ppl-sys: no GMP C++ sources found under {}",
-            cxx_src_dir.display()
-        );
-    }
-
-    let mut objects: Vec<PathBuf> = Vec::with_capacity(sources.len());
-    for src in sources {
-        let stem = src
-            .file_stem()
-            .and_then(|s| s.to_str())
-            .unwrap_or_else(|| panic!("ppl-sys: invalid GMP C++ source path {}", src.display()));
-        let obj = build_dir.join(format!("{stem}.o"));
-
-        let mut cmd = Command::new(&cxx);
-        cmd.args(perf_flags.split_whitespace())
-            .arg("-std=gnu++11")
-            .arg(format!("-I{}", gmp_build_dir.display()))
-            .arg(format!("-I{}", gmp_src_dir.display()))
-            .arg("-c")
-            .arg(&src)
-            .arg("-o")
-            .arg(&obj);
-        syn::run(&mut cmd, "ppl-sys: GMP C++ library compile failed");
-        objects.push(obj);
-    }
-
-    let mut cmd = Command::new(&ar);
-    cmd.arg("rcs").arg(&lib_path);
-    cmd.args(&objects);
-    syn::run(&mut cmd, "ppl-sys: GMP C++ library archive failed");
+fn ensure_gmpxx_static(out_dir: &Path, perf_flags: &str) -> GmpxxBuild {
+    let source_dir = gmp_source_dir();
+    let build_dir = out_dir.join("gmpxx-build");
+    let lib_dir = build_dir.join(".libs");
+    let lib_path = lib_dir.join("libgmpxx.a");
 
     if !lib_path.is_file() {
-        panic!("ppl-sys: GMP C++ library build failed (missing {})", lib_path.display());
+        configure_and_build_gmpxx(&source_dir, &build_dir, perf_flags);
+    }
+    if !lib_path.is_file() {
+        panic!(
+            "ppl-sys: GMP C++ library build failed (missing {})",
+            lib_path.display()
+        );
     }
 
-    build_dir
+    GmpxxBuild {
+        lib_dir,
+        header_dir: source_dir,
+    }
 }

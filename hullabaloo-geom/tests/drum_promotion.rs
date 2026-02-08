@@ -1,4 +1,4 @@
-use hullabaloo::{Drum, DrumBases, DrumPromotion, DrumSkin};
+use hullabaloo_geom::{Drum, DrumBases, DrumPromotion, DrumSkin};
 
 #[path = "support/backend.rs"]
 mod backend;

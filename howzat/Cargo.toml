@@ -14,7 +14,7 @@ dashu = ["calculo/dashu"]
 simd = ["calculo/simd", "hullabaloo/simd"]
 
 [dependencies]
-hullabaloo = { path = "../hullabaloo", version = "0.3.1", default-features = false }
+hullabaloo = { package = "hullabaloo-core", path = "../hullabaloo-core", version = "0.3.1", default-features = false }
 
 calculo = { version = "0.3.1", default-features = false }
 ahash = "0.8"

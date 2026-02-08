@@ -1,4 +1,4 @@
-use hullabaloo::LinearOrientedMatroid;
+use hullabaloo_geom::LinearOrientedMatroid;
 
 #[test]
 fn triangle_linear_matroid_charpoly() {

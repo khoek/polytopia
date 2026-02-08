@@ -31,12 +31,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "allocator-api2"
-version = "0.2.21"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "683d7910e743518b0e34f1186f92494becacb047c7b6bf616c96772180fef923"
-
-[[package]]
 name = "anyhow"
 version = "1.0.101"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -97,7 +91,7 @@ dependencies = [
  "bitflags",
  "cexpr",
  "clang-sys",
- "itertools 0.13.0",
+ "itertools",
  "log",
  "prettyplease",
  "proc-macro2",
@@ -163,7 +157,7 @@ name = "cddlib-rs"
 version = "0.3.1"
 dependencies = [
  "cddlib-sys",
- "hullabaloo",
+ "hullabaloo-core",
  "libc",
  "thiserror 2.0.18",
 ]
@@ -267,31 +261,6 @@ checksum = "9481c1c90cbf2ac953f07c8d4a58aa3945c425b7185c9154d67a65e4230da511"
 dependencies = [
  "cfg-if",
 ]
-
-[[package]]
-name = "crossbeam-deque"
-version = "0.8.6"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9dd111b7b7f7d55b72c0a6ae361660ee5853c9af73f70c3c2ef6858b950e2e51"
-dependencies = [
- "crossbeam-epoch",
- "crossbeam-utils",
-]
-
-[[package]]
-name = "crossbeam-epoch"
-version = "0.9.18"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5b82ac4a3c2ca9c3460964f020e1402edd5753411d7737aa39c3714ad1b5420e"
-dependencies = [
- "crossbeam-utils",
-]
-
-[[package]]
-name = "crossbeam-utils"
-version = "0.8.21"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d0a5c400df2834b80a4c3327b3aad3a4c4cd4de0629063962b03235697506a28"
 
 [[package]]
 name = "dashu-base"
@@ -437,12 +406,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "foldhash"
-version = "0.1.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d9c4f5dac5e15c24eb999c26181a6ca40b39fe946cbe4c263c7209467bc83af2"
-
-[[package]]
 name = "form_urlencoded"
 version = "1.2.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -570,18 +533,6 @@ dependencies = [
 
 [[package]]
 name = "hashbrown"
-version = "0.15.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9229cfe53dfd69f0609a49f65461bd93001ea1ef889cd5529dd176593f5338a1"
-dependencies = [
- "allocator-api2",
- "equivalent",
- "foldhash",
- "rayon",
-]
-
-[[package]]
-name = "hashbrown"
 version = "0.16.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "841d1cc9bed7f9236f321df977030373f4a4163ae1a7dbfe1a51a2c1a51d9100"
@@ -600,7 +551,7 @@ dependencies = [
  "anyhow",
  "calculo",
  "cddlib-rs",
- "hullabaloo",
+ "hullabaloo-core",
  "rand",
  "reqwest",
  "rstest",
@@ -618,7 +569,7 @@ dependencies = [
  "calculo",
  "gmp-mpfr-sys",
  "howzat-kit",
- "hullabaloo",
+ "hullabaloo-core",
  "rug",
 ]
 
@@ -628,7 +579,7 @@ version = "0.3.1"
 dependencies = [
  "calculo",
  "howzat-kit",
- "hullabaloo",
+ "hullabaloo-core",
  "numpy",
  "pyo3",
  "rug",
@@ -643,7 +594,7 @@ dependencies = [
  "cddlib-rs",
  "gmp-mpfr-sys",
  "howzat",
- "hullabaloo",
+ "hullabaloo-core",
  "lrslib-rs",
  "ppl-rs",
  "rug",
@@ -695,18 +646,34 @@ checksum = "6dbf3de79e51f3d586ab4cb9d5c3e2c14aa28ed23d180cf89b4df0454a69cc87"
 name = "hullabaloo"
 version = "0.3.1"
 dependencies = [
+ "hullabaloo-core",
+ "hullabaloo-geom",
+]
+
+[[package]]
+name = "hullabaloo-core"
+version = "0.3.1"
+dependencies = [
  "ahash",
+ "calculo",
+ "derive_more",
+ "fixedbitset",
+ "serde",
+ "smallvec",
+ "thiserror 2.0.18",
+]
+
+[[package]]
+name = "hullabaloo-geom"
+version = "0.3.1"
+dependencies = [
  "anyhow",
  "calculo",
  "cddlib-rs",
- "derive_more",
- "fixedbitset",
+ "hullabaloo-core",
  "rand",
- "rustworkx-core",
  "serde",
  "serde_json",
- "smallvec",
- "thiserror 2.0.18",
 ]
 
 [[package]]
@@ -878,8 +845,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7714e70437a7dc3ac8eb7e6f8df75fd8eb422675fc7678aff7364301092b1017"
 dependencies = [
  "equivalent",
- "hashbrown 0.16.1",
- "rayon",
+ "hashbrown",
 ]
 
 [[package]]
@@ -912,15 +878,6 @@ name = "itertools"
 version = "0.13.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "413ee7dfc52ee1a4949ceeb7dbc8a33f2d6c088194d9f922fb8318faf1f01186"
-dependencies = [
- "either",
-]
-
-[[package]]
-name = "itertools"
-version = "0.14.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2b192c782037fadd9cfa75548310488aabdbf3d2da73885b31bd0abd03351285"
 dependencies = [
  "either",
 ]
@@ -1037,7 +994,7 @@ dependencies = [
  "calculo",
  "cddlib-rs",
  "gmp-mpfr-sys",
- "hullabaloo",
+ "hullabaloo-core",
  "libc",
  "lrslib-sys",
  "rug",
@@ -1110,22 +1067,6 @@ dependencies = [
  "libc",
  "wasi",
  "windows-sys 0.61.2",
-]
-
-[[package]]
-name = "ndarray"
-version = "0.16.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "882ed72dce9365842bf196bdeedf5055305f11fc8c03dee7bb0194a6cad34841"
-dependencies = [
- "matrixmultiply",
- "num-complex",
- "num-integer",
- "num-traits",
- "portable-atomic",
- "portable-atomic-util",
- "rawpointer",
- "rayon",
 ]
 
 [[package]]
@@ -1203,7 +1144,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "071dfc062690e90b734c0b2273ce72ad0ffa95f0c74596bc250dcfd960262841"
 dependencies = [
  "autocfg",
- "libm",
 ]
 
 [[package]]
@@ -1213,7 +1153,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7aac2e6a6e4468ffa092ad43c39b81c79196c2bb773b8db4085f695efe3bba17"
 dependencies = [
  "libc",
- "ndarray 0.17.2",
+ "ndarray",
  "num-complex",
  "num-integer",
  "num-traits",
@@ -1245,18 +1185,6 @@ name = "percent-encoding"
 version = "2.3.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9b4f627cb1b25917193a259e49bdad08f671f8d9708acfd5fe0a8c1455d87220"
-
-[[package]]
-name = "petgraph"
-version = "0.8.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8701b58ea97060d5e5b155d383a69952a60943f0e6dfe30b04c287beb0b27455"
-dependencies = [
- "fixedbitset",
- "hashbrown 0.15.5",
- "indexmap",
- "serde",
-]
 
 [[package]]
 name = "pin-project-lite"
@@ -1299,7 +1227,7 @@ name = "ppl-rs"
 version = "0.3.1"
 dependencies = [
  "calculo",
- "hullabaloo",
+ "hullabaloo-core",
  "libc",
  "ppl-sys",
  "rug",
@@ -1332,17 +1260,6 @@ checksum = "479ca8adacdd7ce8f1fb39ce9ecccbfe93a3f1344b3d0d97f20bc0196208f62b"
 dependencies = [
  "proc-macro2",
  "syn",
-]
-
-[[package]]
-name = "priority-queue"
-version = "2.7.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "93980406f12d9f8140ed5abe7155acb10bb1e69ea55c88960b9c2f117445ef96"
-dependencies = [
- "equivalent",
- "indexmap",
- "serde",
 ]
 
 [[package]]
@@ -1548,25 +1465,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "rand_distr"
-version = "0.5.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6a8615d50dcf34fa31f7ab52692afec947c4dd0ab803cc87cb3b0b4570ff7463"
-dependencies = [
- "num-traits",
- "rand",
-]
-
-[[package]]
-name = "rand_pcg"
-version = "0.9.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b48ac3f7ffaab7fac4d2376632268aa5f89abdb55f7ebf8f4d11fffccb2320f7"
-dependencies = [
- "rand_core",
-]
-
-[[package]]
 name = "raw-cpuid"
 version = "11.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1580,37 +1478,6 @@ name = "rawpointer"
 version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "60a357793950651c4ed0f3f52338f53b2f809f32d83a07f72909fa13e4c6c1e3"
-
-[[package]]
-name = "rayon"
-version = "1.11.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "368f01d005bf8fd9b1206fb6fa653e6c4a81ceb1466406b81792d87c5677a58f"
-dependencies = [
- "either",
- "rayon-core",
-]
-
-[[package]]
-name = "rayon-cond"
-version = "0.4.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2964d0cf57a3e7a06e8183d14a8b527195c706b7983549cd5462d5aa3747438f"
-dependencies = [
- "either",
- "itertools 0.14.0",
- "rayon",
-]
-
-[[package]]
-name = "rayon-core"
-version = "1.13.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "22e18b0f0062d30d4230b2e85ff77fdfe4326feb054b9783a3460d8435c8ab91"
-dependencies = [
- "crossbeam-deque",
- "crossbeam-utils",
-]
 
 [[package]]
 name = "reborrow"
@@ -1865,27 +1732,6 @@ name = "rustversion"
 version = "1.0.22"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b39cdef0fa800fc44525c84ccb54a029961a8215f9619753635a9c0d2538d46d"
-
-[[package]]
-name = "rustworkx-core"
-version = "0.17.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "aaeee6f84153fd6f62507fc22bfe9499c8485075b44186dcbb918166ef75116f"
-dependencies = [
- "fixedbitset",
- "foldhash",
- "hashbrown 0.15.5",
- "indexmap",
- "ndarray 0.16.1",
- "num-traits",
- "petgraph",
- "priority-queue",
- "rand",
- "rand_distr",
- "rand_pcg",
- "rayon",
- "rayon-cond",
-]
 
 [[package]]
 name = "ryu"

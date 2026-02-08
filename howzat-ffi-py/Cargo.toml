@@ -17,7 +17,7 @@ use-system-gmp = ["howzat-kit/use-system-gmp"]
 
 [dependencies]
 howzat-kit = { path = "../howzat-kit", version = "0.3.1", features = ["pic"] }
-hullabaloo = { path = "../hullabaloo", version = "0.3.1" }
+hullabaloo = { package = "hullabaloo-core", path = "../hullabaloo-core", version = "0.3.1" }
 
 calculo = { version = "0.3.1" }
 numpy = "0.27"

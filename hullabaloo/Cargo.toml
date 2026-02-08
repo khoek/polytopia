@@ -13,24 +13,9 @@ path = "src/lib.rs"
 
 [features]
 default = ["simd"]
-simd = ["calculo/simd"]
-serde = ["dep:serde"]
+simd = ["hullabaloo-core/simd", "hullabaloo-geom/simd"]
+serde = ["hullabaloo-core/serde", "hullabaloo-geom/serde"]
 
 [dependencies]
-calculo = { version = "0.3.1", default-features = false }
-
-ahash = "0.8"
-derive_more = { version = "2", features = ["add", "mul", "not", "display"] }
-fixedbitset = "0.5"
-smallvec = "1"
-thiserror = "2"
-serde = { version = "1", features = ["derive"], optional = true }
-
-[dev-dependencies]
-cddlib-rs = { path = "../cddlib-rs", version = "0.3.1" }
-
-anyhow = "1"
-rand = "0.9"
-serde = { version = "1", features = ["derive"] }
-serde_json = "1"
-rustworkx-core = "0.17"
+hullabaloo-core = { path = "../hullabaloo-core", version = "0.3.1", default-features = false }
+hullabaloo-geom = { path = "../hullabaloo-geom", version = "0.3.1", default-features = false }

@@ -1,7 +1,7 @@
 use anyhow::{Result, anyhow, ensure};
 use cddlib_rs::{Generator, Matrix as CddMatrix, NumberType, Polyhedron as CddPolyhedron};
 
-use hullabaloo::AdjacencyList;
+use hullabaloo_geom::AdjacencyList;
 
 pub(super) fn build_cdd_polyhedron_rational(
     vertices: &[Vec<f64>],
@@ -75,7 +75,7 @@ pub(super) fn drum_width_from_vertices(
         .ok_or_else(|| anyhow!("graph distance not found"))
 }
 
-pub(super) fn drum_width<G: hullabaloo::Geometrizable<N = f64>>(
+pub(super) fn drum_width<G: hullabaloo_geom::Geometrizable<N = f64>>(
     geom: G,
     top_count: usize,
     bot_count: usize,

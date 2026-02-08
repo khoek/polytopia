@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 
 use anyhow::{Result, anyhow, ensure};
 use cddlib_rs::{Generator, Polyhedron};
-use hullabaloo::{Drum, Geometrizable};
+use hullabaloo_geom::{Drum, Geometrizable};
 use rand::{Rng, SeedableRng, rngs::StdRng};
 use serde::{Deserialize, Serialize};
 

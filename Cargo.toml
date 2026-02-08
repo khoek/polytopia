@@ -3,6 +3,8 @@ resolver = "3"
 members = [
     "cddlib-sys",
     "cddlib-rs",
+    "hullabaloo-core",
+    "hullabaloo-geom",
     "hullabaloo",
     "howzat",
     "howzat-kit",

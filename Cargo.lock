@@ -129,6 +129,8 @@ checksum = "1e748733b7cbc798e1434b6ac524f0c1ff2ab456fe201501e6497c8417a4fc33"
 [[package]]
 name = "calculo"
 version = "0.3.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "08db35bab54c4482034466e4847d6ed44dbcf534c629de2b8f5db5ae35d41e13"
 dependencies = [
  "ahash",
  "dashu-base",
@@ -1936,6 +1938,8 @@ dependencies = [
 [[package]]
 name = "syntheon"
 version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "46d87818a64144294aabe0864ba4583ed48efc41f2a724114f7a5ef3ff08ab65"
 dependencies = [
  "flate2",
  "tar",
@@ -2752,15 +2756,3 @@ name = "zmij"
 version = "1.0.19"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3ff05f8caa9038894637571ae6b9e29466c1f4f829d26c9b28f869a29cbe3445"
-
-[[patch.unused]]
-name = "clikeys"
-version = "0.3.1"
-
-[[patch.unused]]
-name = "clikeys-derive"
-version = "0.3.1"
-
-[[patch.unused]]
-name = "graphum"
-version = "0.3.1"

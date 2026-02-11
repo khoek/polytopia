@@ -9,7 +9,7 @@ use howzat::dd::{BasisInitialization, ConeOptions, EnumerationMode};
 use howzat::matrix::LpMatrixBuilder;
 use howzat::polyhedron::PolyhedronOptions;
 use hullabaloo::types::{Generator, IncidenceOutput, RowOrder, RowSet};
-use rand::{Rng, SeedableRng};
+use rand::{RngExt, SeedableRng};
 use rstest::rstest;
 
 const SEED_BASE: u64 = 0xDEADBEEF;

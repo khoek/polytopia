@@ -49,7 +49,7 @@ enum SolveRepresentation {
     Inequality,
 }
 
-#[pyclass(name = "Representation", module = "howzat")]
+#[pyclass(name = "Representation", module = "howzat", from_py_object)]
 #[derive(Copy, Clone)]
 pub struct PyRepresentation {
     repr: SolveRepresentation,
@@ -570,9 +570,9 @@ fn py_any_to_rug_integer(ob: &Bound<'_, PyAny>) -> PyResult<rug::Integer> {
     }
 
     let owned: Bound<'_, PyInt> = unsafe {
-        Py::from_owned_ptr_or_err(py, pyo3::ffi::PyNumber_Index(ob.as_ptr()))?
-            .into_bound(py)
-    };
+        Bound::from_owned_ptr_or_err(py, pyo3::ffi::PyNumber_Index(ob.as_ptr()))?
+    }
+    .cast_into()?;
     py_int_to_rug_integer(&owned)
 }
 

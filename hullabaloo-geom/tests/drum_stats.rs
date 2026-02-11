@@ -3,7 +3,7 @@ use std::collections::BTreeMap;
 use anyhow::{Result, anyhow, ensure};
 use cddlib_rs::{Generator, Polyhedron};
 use hullabaloo_geom::{Drum, Geometrizable};
-use rand::{Rng, SeedableRng, rngs::StdRng};
+use rand::{Rng, RngExt, SeedableRng, rngs::StdRng};
 use serde::{Deserialize, Serialize};
 
 const DRUM_SEEDS: &[u64] = &[1, 2, 3, 5, 8];

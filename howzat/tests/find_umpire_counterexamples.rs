@@ -10,7 +10,7 @@ use howzat::dd::{ConeOptions, EnumerationMode};
 use howzat::matrix::LpMatrix as Matrix;
 use howzat::polyhedron::{DdConfig, PolyhedronOptions, PolyhedronOutput};
 use hullabaloo::types::{Generator, RepresentationKind};
-use rand::{Rng, SeedableRng, rngs::StdRng};
+use rand::{Rng, RngExt, SeedableRng, rngs::StdRng};
 use std::collections::BTreeSet;
 use std::path::PathBuf;
 

@@ -21,6 +21,6 @@ howzat-kit = { path = "../howzat-kit", version = "0.3.2", features = ["pic"] }
 hullabaloo = { package = "hullabaloo-core", path = "../hullabaloo-core", version = "0.3.1" }
 
 calculo = { version = "0.3.1" }
-numpy = "0.27"
-pyo3 = { version = "0.27", features = ["extension-module"] }
+numpy = "0.28"
+pyo3 = { version = "0.28", features = ["extension-module"] }
 rug = { version = "1", default-features = false, features = ["integer", "rational", "std"] }

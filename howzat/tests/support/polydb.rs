@@ -1,7 +1,7 @@
 use anyhow::{Context, Result, anyhow};
 use howzat::matrix::{LpMatrix, LpMatrixBuilder};
 use hullabaloo::types::{Generator, Inequality, RowSet};
-use rand::Rng;
+use rand::RngExt;
 use rand::prelude::IndexedRandom;
 use rand::rng;
 use reqwest::blocking::Client;

@@ -127,13 +127,26 @@ pub(super) fn summarize_howzat_geometry<
                     }
                 }
 
-                let vertex_adjacency =
-                    hullabaloo::adjacency::input_adjacency_from_rows_by_node_with::<Adj::Builder>(
-                        &facets_by_vertex,
-                        facets_to_vertices_rowsets.len(),
-                        &redundant_vertices,
-                        &dominant_vertices,
-                    );
+                let mut excluded_nodes = vec![false; generator_rows];
+                for idx in redundant_vertices.iter() {
+                    excluded_nodes[idx.as_index()] = true;
+                }
+                for idx in dominant_vertices.iter() {
+                    excluded_nodes[idx.as_index()] = true;
+                }
+                let vertex_adjacency = hullabaloo::adjacency::adjacency_from_incidence_with::<
+                    Adj::Builder,
+                >(
+                    &facets_by_vertex,
+                    facets_to_vertices_rowsets.len(),
+                    inequality_matrix.col_count(),
+                    hullabaloo::adjacency::IncidenceAdjacencyOptions {
+                        excluded_nodes: Some(&excluded_nodes),
+                        active_rows: None,
+                        candidate_edges: None,
+                        assume_nondegenerate: false,
+                    },
+                );
 
                 if let Some(start) = start_vertex_adjacency {
                     detail.vertex_adjacency = start.elapsed();
@@ -324,13 +337,14 @@ pub(super) fn summarize_howzat_geometry<
                     }
                 }
 
-                let vertex_adjacency =
-                    hullabaloo::adjacency::input_adjacency_from_rows_by_node_with::<Adj::Builder>(
-                        &facets_by_vertex,
-                        facet_count,
-                        &RowSet::new(vertex_rows),
-                        &RowSet::new(vertex_rows),
-                    );
+                let vertex_adjacency = hullabaloo::adjacency::adjacency_from_incidence_with::<
+                    Adj::Builder,
+                >(
+                    &facets_by_vertex,
+                    facet_count,
+                    inequality_matrix.col_count(),
+                    hullabaloo::adjacency::IncidenceAdjacencyOptions::default(),
+                );
 
                 if let Some(start) = start_vertex_adjacency {
                     detail.vertex_adjacency = start.elapsed();

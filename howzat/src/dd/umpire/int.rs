@@ -331,11 +331,20 @@ impl<N: Rat, E: Epsilon<N>, H: HalfspacePolicy<N>> IntUmpire<N, E, H> {
             }
             any = true;
             let abs = v.abs().expect("exact integer normalization requires abs");
+            if abs == z1 {
+                // Any unit coordinate makes the whole vector primitive.
+                return true;
+            }
             match gcd.as_mut() {
                 None => gcd = Some(abs),
-                Some(g) => g
-                    .gcd_assign(&abs)
-                    .expect("exact integer normalization requires gcd"),
+                Some(g) => {
+                    g.gcd_assign(&abs)
+                        .expect("exact integer normalization requires gcd");
+                    if *g == z1 {
+                        // Once gcd hits 1 we cannot reduce further.
+                        return true;
+                    }
+                }
             }
         }
 
@@ -379,6 +388,10 @@ impl<N: Rat, E: Epsilon<N>, H: HalfspacePolicy<N>> IntUmpire<N, E, H> {
         mut zero_set: <ZR as ZeroRepr>::Set,
         seeded_zero_set: bool,
         mut preseeded_row_signs: Option<Vec<Option<Sign>>>,
+        parent_sign_hints: Option<(
+            &H::WrappedRayData<IntRay<N, <ZR as ZeroRepr>::Set>>,
+            &H::WrappedRayData<IntRay<N, <ZR as ZeroRepr>::Set>>,
+        )>,
     ) -> H::WrappedRayData<IntRay<N, <ZR as ZeroRepr>::Set>> {
         let m = cone.matrix().row_count();
         let mut negative_rows = self.halfspace.take_negative_rows(m);
@@ -403,7 +416,18 @@ impl<N: Rat, E: Epsilon<N>, H: HalfspacePolicy<N>> IntUmpire<N, E, H> {
         let mut last_eval = N::Int::zero();
         let mut last_sign = Sign::Zero;
 
-        for &row_idx in &cone.order_vector {
+        let mut start_pos = 0usize;
+        if !ZR::USE_INCIDENCE_INDEX_FOR_CANDIDATE_TEST && !track_negatives && parent_sign_hints.is_some()
+            && let Some(row) = last_row
+            && let Some(&pos) = cone.row_to_pos.get(row)
+            && pos < cone.order_vector.len()
+        {
+            // In preordered SatRepr mode, rows before `last_row` are already added and therefore
+            // satisfied by all active parents; they cannot be the first infeasible row.
+            start_pos = pos;
+        }
+
+        for &row_idx in cone.order_vector.iter().skip(start_pos) {
             let sign = if let Some(preseeded) = row_signs[row_idx] {
                 if preseeded == Sign::Zero {
                     N::Int::assign_from(&mut self.dot_acc, &N::Int::zero());
@@ -416,6 +440,32 @@ impl<N: Rat, E: Epsilon<N>, H: HalfspacePolicy<N>> IntUmpire<N, E, H> {
             {
                 N::Int::assign_from(&mut self.dot_acc, &N::Int::zero());
                 Sign::Zero
+            } else if let Some((parent_a, parent_b)) = parent_sign_hints {
+                let parent_a_sign = parent_a.cached_row_sign(row_idx).or_else(|| {
+                    <ZR as ZeroRepr>::zero_set_contains_row(cone, parent_a.zero_set(), row_idx)
+                        .then_some(Sign::Zero)
+                });
+                let parent_b_sign = parent_b.cached_row_sign(row_idx).or_else(|| {
+                    <ZR as ZeroRepr>::zero_set_contains_row(cone, parent_b.zero_set(), row_idx)
+                        .then_some(Sign::Zero)
+                });
+                if let (Some(parent_a_sign), Some(parent_b_sign)) = (parent_a_sign, parent_b_sign) {
+                    if let Some(inferred) = Self::combine_nonnegative_signs(parent_a_sign, parent_b_sign)
+                    {
+                        if inferred == Sign::Zero {
+                            N::Int::assign_from(&mut self.dot_acc, &N::Int::zero());
+                        } else if Some(row_idx) == last_row {
+                            self.dot_int_in_acc(cone, row_idx, &vector);
+                        }
+                        inferred
+                    } else {
+                        self.dot_int_in_acc(cone, row_idx, &vector);
+                        Self::int_sign(&self.dot_acc)
+                    }
+                } else {
+                    self.dot_int_in_acc(cone, row_idx, &vector);
+                    Self::int_sign(&self.dot_acc)
+                }
             } else {
                 self.dot_int_in_acc(cone, row_idx, &vector);
                 Self::int_sign(&self.dot_acc)
@@ -447,6 +497,13 @@ impl<N: Rat, E: Epsilon<N>, H: HalfspacePolicy<N>> IntUmpire<N, E, H> {
             }
             if kind.violates_sign(sign, relaxed) {
                 feasible = false;
+            }
+
+            if !ZR::USE_INCIDENCE_INDEX_FOR_CANDIDATE_TEST
+                && !track_negatives
+                && first_infeasible_row.is_some()
+            {
+                break;
             }
         }
 
@@ -1306,6 +1363,7 @@ impl<N: Rat, E: Epsilon<N>, H: HalfspacePolicy<N>, ZR: crate::dd::mode::Preorder
             zero_set,
             false,
             None,
+            None,
         )
     }
 
@@ -1445,22 +1503,6 @@ impl<N: Rat, E: Epsilon<N>, H: HalfspacePolicy<N>, ZR: crate::dd::mode::Preorder
             inherited_zero_set.insert(id);
         }
         let mut inherited_row_signs = self.take_row_signs(cone.matrix().row_count());
-        for &row_idx in &cone.order_vector {
-            let parent_a_sign = ray1.cached_row_sign(row_idx).or_else(|| {
-                <ZR as ZeroRepr>::zero_set_contains_row(cone, ray1.zero_set(), row_idx)
-                    .then_some(Sign::Zero)
-            });
-            let parent_b_sign = ray2.cached_row_sign(row_idx).or_else(|| {
-                <ZR as ZeroRepr>::zero_set_contains_row(cone, ray2.zero_set(), row_idx)
-                    .then_some(Sign::Zero)
-            });
-            let (Some(parent_a_sign), Some(parent_b_sign)) = (parent_a_sign, parent_b_sign) else {
-                continue;
-            };
-            if let Some(sign) = Self::combine_nonnegative_signs(parent_a_sign, parent_b_sign) {
-                inherited_row_signs[row_idx] = Some(sign);
-            }
-        }
         inherited_row_signs[row] = Some(Sign::Zero);
 
         let (val1, val2) = match (
@@ -1489,12 +1531,15 @@ impl<N: Rat, E: Epsilon<N>, H: HalfspacePolicy<N>, ZR: crate::dd::mode::Preorder
         g.gcd_assign(&a2)
             .expect("exact ray generation requires gcd");
         let z1 = N::Int::one();
+        let z0 = N::Int::zero();
         if !g.is_zero() && g != z1 {
             a1.div_assign_exact(&g)
                 .expect("exact ray generation requires exact division");
             a2.div_assign_exact(&g)
                 .expect("exact ray generation requires exact division");
         }
+        let a1_is_one = a1 == z1;
+        let a2_is_one = a2 == z1;
 
         let dim = ray1.vector().len();
         if dim != ray2.vector().len() {
@@ -1502,25 +1547,83 @@ impl<N: Rat, E: Epsilon<N>, H: HalfspacePolicy<N>, ZR: crate::dd::mode::Preorder
         }
 
         let mut new_vector = self.take_vector(dim);
+        let mut any_nonzero = false;
+        let mut primitive = false;
+        let mut vec_gcd: Option<N::Int> = None;
         for i in 0..dim {
-            N::Int::assign_from(&mut self.dot_acc, &ray1.vector()[i]);
-            self.dot_acc
-                .mul_assign(&a2)
-                .expect("exact ray generation requires multiplication");
-            N::Int::assign_from(&mut self.dot_tmp, &ray2.vector()[i]);
-            self.dot_tmp
-                .mul_assign(&a1)
-                .expect("exact ray generation requires multiplication");
-            self.dot_acc += &self.dot_tmp;
-            N::Int::assign_from(&mut new_vector[i], &self.dot_acc);
-        }
+            let v1 = &ray1.vector()[i];
+            let v2 = &ray2.vector()[i];
+            let p1_nz = !v1.is_zero();
+            let p2_nz = !v2.is_zero();
+            if p1_nz {
+                N::Int::assign_from(&mut self.dot_acc, v1);
+                if !a2_is_one {
+                    self.dot_acc
+                        .mul_assign(&a2)
+                        .expect("exact ray generation requires multiplication");
+                }
+            } else {
+                N::Int::assign_from(&mut self.dot_acc, &z0);
+            }
 
-        if !Self::normalize_vector_in_place(&mut new_vector) {
+            if p2_nz {
+                if a1_is_one {
+                    self.dot_acc += v2;
+                } else {
+                    N::Int::assign_from(&mut self.dot_tmp, v2);
+                    self.dot_tmp
+                        .mul_assign(&a1)
+                        .expect("exact ray generation requires multiplication");
+                    self.dot_acc += &self.dot_tmp;
+                }
+            }
+            N::Int::assign_from(&mut new_vector[i], &self.dot_acc);
+            if self.dot_acc.is_zero() {
+                continue;
+            }
+            any_nonzero = true;
+            if primitive {
+                continue;
+            }
+            N::Int::assign_from(&mut self.dot_tmp, &self.dot_acc);
+            self.dot_tmp
+                .abs_mut()
+                .expect("exact ray generation normalization requires abs");
+            if self.dot_tmp == z1 {
+                primitive = true;
+                vec_gcd = Some(z1.clone());
+                continue;
+            }
+            match vec_gcd.as_mut() {
+                None => vec_gcd = Some(self.dot_tmp.clone()),
+                Some(gv) => {
+                    gv.gcd_assign(&self.dot_tmp)
+                        .expect("exact ray generation normalization requires gcd");
+                    if *gv == z1 {
+                        primitive = true;
+                    }
+                }
+            }
+        }
+        if !any_nonzero {
             self.vector_pool.push(new_vector);
             return Err(inherited_zero_set);
         }
-
-        Ok(self.build_ray_from_vector::<ZR, R>(
+        if !primitive
+            && let Some(gv) = vec_gcd.as_ref()
+            && !gv.is_zero()
+            && *gv != z1
+        {
+            for v in new_vector.iter_mut() {
+                if v.is_zero() {
+                    continue;
+                }
+                v.div_assign_exact(gv)
+                    .expect("exact ray generation normalization requires exact division");
+            }
+        }
+        let parent_hints = Some((ray1, ray2));
+        let ray_data = self.build_ray_from_vector::<ZR, R>(
             cone,
             new_vector,
             relaxed,
@@ -1528,6 +1631,8 @@ impl<N: Rat, E: Epsilon<N>, H: HalfspacePolicy<N>, ZR: crate::dd::mode::Preorder
             inherited_zero_set,
             true,
             Some(inherited_row_signs),
-        ))
+            parent_hints,
+        );
+        Ok(ray_data)
     }
 }

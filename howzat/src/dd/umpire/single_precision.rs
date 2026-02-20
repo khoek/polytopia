@@ -10,6 +10,106 @@ use std::cmp::Ordering;
 use super::policies::{HalfspacePolicy, LexMin};
 use super::{ConeCtx, Umpire};
 
+#[derive(Clone, Debug)]
+pub struct SpRay<N: Num, ZS: crate::dd::zero::ZeroSet = crate::dd::SatSet> {
+    pub(crate) inner: Ray<N, ZS>,
+    pub(crate) row_signs: Vec<Option<Sign>>,
+}
+
+impl<N: Num, ZS: crate::dd::zero::ZeroSet> std::ops::Deref for SpRay<N, ZS> {
+    type Target = Ray<N, ZS>;
+
+    #[inline(always)]
+    fn deref(&self) -> &Self::Target {
+        &self.inner
+    }
+}
+
+impl<N: Num, ZS: crate::dd::zero::ZeroSet> std::ops::DerefMut for SpRay<N, ZS> {
+    #[inline(always)]
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.inner
+    }
+}
+
+impl<N: Num, ZS: crate::dd::zero::ZeroSet> SpRay<N, ZS> {
+    #[inline(always)]
+    fn cached_sign(&self, row: Row) -> Option<Sign> {
+        (self.class.last_eval_row == Some(row)).then_some(self.class.last_sign)
+    }
+
+    #[inline(always)]
+    fn cached_row_sign(&self, row: Row) -> Option<Sign> {
+        self.row_signs.get(row).copied().flatten()
+    }
+
+    #[inline(always)]
+    fn set_cached_row_sign(&mut self, row: Row, sign: Sign) {
+        if let Some(slot) = self.row_signs.get_mut(row) {
+            *slot = Some(sign);
+        }
+    }
+}
+
+impl<N: Num, ZS: crate::dd::zero::ZeroSet> crate::dd::ray::RayData for SpRay<N, ZS> {
+    type ZeroSet = ZS;
+
+    #[inline(always)]
+    fn zero_set(&self) -> &Self::ZeroSet {
+        &self.class.zero_set
+    }
+
+    #[inline(always)]
+    fn zero_set_mut(&mut self) -> &mut Self::ZeroSet {
+        &mut self.class.zero_set
+    }
+
+    #[inline(always)]
+    fn zero_set_signature(&self) -> u64 {
+        self.class.zero_set_sig
+    }
+
+    #[inline(always)]
+    fn set_zero_set_signature(&mut self, sig: u64) {
+        self.class.zero_set_sig = sig;
+    }
+
+    #[inline(always)]
+    fn zero_set_count(&self) -> usize {
+        self.class.zero_set_count
+    }
+
+    #[inline(always)]
+    fn set_zero_set_count(&mut self, count: usize) {
+        self.class.zero_set_count = count;
+    }
+
+    #[inline(always)]
+    fn first_infeasible_row(&self) -> Option<Row> {
+        self.class.first_infeasible_row
+    }
+
+    #[inline(always)]
+    fn set_first_infeasible_row(&mut self, row: Option<Row>) {
+        self.class.first_infeasible_row = row;
+    }
+
+    #[inline(always)]
+    fn is_feasible(&self) -> bool {
+        self.class.feasible
+    }
+
+    #[inline(always)]
+    fn is_weakly_feasible(&self) -> bool {
+        self.class.weakly_feasible
+    }
+
+    #[inline(always)]
+    fn last_sign(&self) -> Sign {
+        self.class.last_sign
+    }
+}
+
 pub trait Purifier<N: Num>: Clone {
     const ENABLED: bool = true;
 
@@ -218,6 +318,7 @@ pub struct SinglePrecisionUmpire<
     purifier: P,
     expected_zero: RowSet,
     vector_pool: Vec<Vec<N>>,
+    row_sign_pool: Vec<Vec<Option<Sign>>>,
 }
 
 impl<N: DefaultNormalizer, E: Epsilon<N>>
@@ -238,6 +339,7 @@ impl<N: Num, E: Epsilon<N>, NM: Normalizer<N>> SinglePrecisionUmpire<N, E, NM, L
             purifier: NoPurifier,
             expected_zero: RowSet::new(0),
             vector_pool: Vec::new(),
+            row_sign_pool: Vec::new(),
         }
     }
 }
@@ -253,6 +355,7 @@ impl<N: Num, E: Epsilon<N>, NM: Normalizer<N>, P: Purifier<N>>
             purifier,
             expected_zero: RowSet::new(0),
             vector_pool: Vec::new(),
+            row_sign_pool: Vec::new(),
         }
     }
 }
@@ -268,6 +371,7 @@ impl<N: DefaultNormalizer, E: Epsilon<N>, H: HalfspacePolicy<N>>
             purifier: NoPurifier,
             expected_zero: RowSet::new(0),
             vector_pool: Vec::new(),
+            row_sign_pool: Vec::new(),
         }
     }
 }
@@ -301,6 +405,194 @@ impl<N: Num, E: Epsilon<N>, NM: Normalizer<N>, H: HalfspacePolicy<N>, P: Purifie
         }
         v
     }
+
+    #[inline]
+    fn take_row_signs(&mut self, row_count: usize) -> Vec<Option<Sign>> {
+        let mut out = self.row_sign_pool.pop().unwrap_or_default();
+        if out.len() != row_count {
+            out.resize(row_count, None);
+        } else {
+            out.fill(None);
+        }
+        out
+    }
+
+    #[inline(always)]
+    fn combine_nonnegative_signs(a: Sign, b: Sign) -> Option<Sign> {
+        match (a, b) {
+            (Sign::Negative, Sign::Positive) | (Sign::Positive, Sign::Negative) => None,
+            (Sign::Zero, sign) | (sign, Sign::Zero) => Some(sign),
+            (Sign::Negative, Sign::Negative) => Some(Sign::Negative),
+            (Sign::Positive, Sign::Positive) => Some(Sign::Positive),
+        }
+    }
+
+    fn build_ray_from_vector<ZR: ZeroRepr, R: Representation>(
+        &mut self,
+        cone: &ConeCtx<N, R, LpMatrix<N, R>>,
+        vector: Vec<N>,
+        relaxed: bool,
+        last_row: Option<Row>,
+        mut zero_set: <ZR as ZeroRepr>::Set,
+        seeded_zero_set: bool,
+        mut preseeded_row_signs: Option<Vec<Option<Sign>>>,
+        parent_sign_hints: Option<(
+            &H::WrappedRayData<SpRay<N, <ZR as ZeroRepr>::Set>>,
+            &H::WrappedRayData<SpRay<N, <ZR as ZeroRepr>::Set>>,
+        )>,
+    ) -> H::WrappedRayData<SpRay<N, <ZR as ZeroRepr>::Set>> {
+        let m = cone.matrix().row_count();
+        let mut negative_rows = self.halfspace.take_negative_rows(m);
+        let track_negatives = negative_rows.len() == m;
+
+        zero_set.ensure_domain(m);
+        if !seeded_zero_set {
+            zero_set.clear();
+        }
+        let mut row_signs = preseeded_row_signs
+            .take()
+            .unwrap_or_else(|| self.take_row_signs(m));
+        if row_signs.len() != m {
+            row_signs.resize(m, None);
+        }
+
+        let mut zero_set_count = zero_set.cardinality();
+        let mut feasible = true;
+        let mut weakly_feasible = true;
+        let mut first_infeasible_row = None;
+        let mut last_eval_row = None;
+        let mut last_eval = N::zero();
+        let mut last_sign = Sign::Zero;
+        let mut dot_tmp = N::zero();
+
+        let mut start_pos = 0usize;
+        if !ZR::USE_INCIDENCE_INDEX_FOR_CANDIDATE_TEST && !track_negatives && parent_sign_hints.is_some()
+            && let Some(row) = last_row
+            && let Some(&pos) = cone.row_to_pos.get(row)
+            && pos < cone.order_vector.len()
+        {
+            // In preordered SatRepr mode, rows before `last_row` are already added and are
+            // nonnegative on both parents; they cannot be the first infeasible row.
+            start_pos = pos;
+        }
+
+        let matrix = cone.matrix().storage();
+        for &row_idx in cone.order_vector.iter().skip(start_pos) {
+            let sign = if let Some(preseeded) = row_signs[row_idx] {
+                if preseeded == Sign::Zero {
+                    dot_tmp = N::zero();
+                } else if Some(row_idx) == last_row {
+                    dot_tmp = linalg::dot(&matrix[row_idx], &vector);
+                }
+                preseeded
+            } else if let Some((parent_a, parent_b)) = parent_sign_hints {
+                let parent_a_sign = parent_a.cached_row_sign(row_idx).or_else(|| {
+                    <ZR as ZeroRepr>::zero_set_contains_row(cone, parent_a.zero_set(), row_idx)
+                        .then_some(Sign::Zero)
+                });
+                let parent_b_sign = parent_b.cached_row_sign(row_idx).or_else(|| {
+                    <ZR as ZeroRepr>::zero_set_contains_row(cone, parent_b.zero_set(), row_idx)
+                        .then_some(Sign::Zero)
+                });
+                if let (Some(parent_a_sign), Some(parent_b_sign)) = (parent_a_sign, parent_b_sign) {
+                    if let Some(inferred) = Self::combine_nonnegative_signs(parent_a_sign, parent_b_sign) {
+                        if inferred == Sign::Zero {
+                            dot_tmp = N::zero();
+                        } else if Some(row_idx) == last_row {
+                            dot_tmp = linalg::dot(&matrix[row_idx], &vector);
+                        }
+                        inferred
+                    } else if seeded_zero_set
+                        && <ZR as ZeroRepr>::zero_set_contains_row(cone, &zero_set, row_idx)
+                    {
+                        dot_tmp = N::zero();
+                        Sign::Zero
+                    } else {
+                        dot_tmp = linalg::dot(&matrix[row_idx], &vector);
+                        self.eps.sign(&dot_tmp)
+                    }
+                } else if seeded_zero_set
+                    && <ZR as ZeroRepr>::zero_set_contains_row(cone, &zero_set, row_idx)
+                {
+                    dot_tmp = N::zero();
+                    Sign::Zero
+                } else {
+                    dot_tmp = linalg::dot(&matrix[row_idx], &vector);
+                    self.eps.sign(&dot_tmp)
+                }
+            } else if seeded_zero_set
+                && <ZR as ZeroRepr>::zero_set_contains_row(cone, &zero_set, row_idx)
+            {
+                dot_tmp = N::zero();
+                Sign::Zero
+            } else {
+                dot_tmp = linalg::dot(&matrix[row_idx], &vector);
+                self.eps.sign(&dot_tmp)
+            };
+            row_signs[row_idx] = Some(sign);
+
+            if track_negatives && sign == Sign::Negative {
+                negative_rows.insert(row_idx);
+            }
+            if Some(row_idx) == last_row {
+                last_eval_row = Some(row_idx);
+                last_eval = dot_tmp.clone();
+                last_sign = sign;
+            }
+
+            if sign == Sign::Zero
+                && let Some(id) = <ZR as ZeroRepr>::id_for_row(cone, row_idx)
+                && !zero_set.contains(id)
+            {
+                zero_set.insert(id);
+                zero_set_count += 1;
+            }
+
+            let kind = cone.equality_kinds[row_idx];
+            if kind.weakly_violates_sign(sign, relaxed) {
+                if first_infeasible_row.is_none() {
+                    first_infeasible_row = Some(row_idx);
+                }
+                weakly_feasible = false;
+            }
+            if kind.violates_sign(sign, relaxed) {
+                feasible = false;
+            }
+
+            if !ZR::USE_INCIDENCE_INDEX_FOR_CANDIDATE_TEST
+                && !track_negatives
+                && first_infeasible_row.is_some()
+            {
+                break;
+            }
+        }
+
+        if relaxed {
+            feasible = weakly_feasible;
+        }
+
+        let zero_set_sig = zero_set.signature_u64();
+        let ray_data = SpRay {
+            inner: Ray {
+                vector,
+                class: RayClass {
+                    zero_set,
+                    zero_set_sig,
+                    zero_set_count,
+                    first_infeasible_row,
+                    feasible,
+                    weakly_feasible,
+                    last_eval_row,
+                    last_eval,
+                    last_sign,
+                },
+            },
+            row_signs,
+        };
+
+        self.halfspace.wrap_ray_data(ray_data, negative_rows)
+    }
+
 }
 
 impl<
@@ -315,7 +607,7 @@ impl<
     type Eps = E;
     type Scalar = N;
     type MatrixData<R: Representation> = LpMatrix<N, R>;
-    type RayData = H::WrappedRayData<Ray<N, <ZR as ZeroRepr>::Set>>;
+    type RayData = H::WrappedRayData<SpRay<N, <ZR as ZeroRepr>::Set>>;
     type HalfspacePolicy = H;
 
     #[inline(always)]
@@ -405,6 +697,7 @@ impl<
         ray_data.class.last_eval_row = None;
         ray_data.class.last_eval = N::zero();
         ray_data.class.last_sign = Sign::Zero;
+        ray_data.row_signs.clear();
     }
 
     fn sign_for_row_on_ray<R: Representation>(
@@ -413,8 +706,11 @@ impl<
         ray: &Self::RayData,
         row: Row,
     ) -> Sign {
-        if ray.class.last_eval_row == Some(row) {
-            return ray.class.last_sign;
+        if let Some(sign) = ray.cached_sign(row) {
+            return sign;
+        }
+        if let Some(sign) = ray.cached_row_sign(row) {
+            return sign;
         }
         let value = cone.row_value(row, ray.vector());
         self.eps.sign(&value)
@@ -461,6 +757,9 @@ impl<
     fn recycle_ray_data(&mut self, ray_data: &mut Self::RayData) {
         self.halfspace.recycle_wrapped_ray_data(ray_data);
         self.vector_pool.push(std::mem::take(&mut ray_data.vector));
+        let mut row_signs = std::mem::take(&mut ray_data.row_signs);
+        row_signs.clear();
+        self.row_sign_pool.push(row_signs);
         ray_data.class.zero_set_sig = 0;
         ray_data.class.zero_set_count = 0;
     }
@@ -471,98 +770,47 @@ impl<
         ray_data: &mut Self::RayData,
         row: Row,
     ) -> Sign {
-        if ray_data.class.last_eval_row == Some(row) {
-            return ray_data.class.last_sign;
+        if let Some(sign) = ray_data.cached_sign(row) {
+            return sign;
         }
-        let row_vec = &cone.matrix().storage()[row];
-        let value = linalg::dot(row_vec, &ray_data.vector);
-        let sign = self.eps.sign(&value);
+        let (sign, value) = if let Some(sign) = ray_data.cached_row_sign(row) {
+            let value = if sign == Sign::Zero {
+                N::zero()
+            } else {
+                linalg::dot(&cone.matrix().storage()[row], &ray_data.vector)
+            };
+            (sign, value)
+        } else {
+            let value = linalg::dot(&cone.matrix().storage()[row], &ray_data.vector);
+            let sign = self.eps.sign(&value);
+            (sign, value)
+        };
         ray_data.class.last_eval_row = Some(row);
         ray_data.class.last_eval = value;
         ray_data.class.last_sign = sign;
+        ray_data.set_cached_row_sign(row, sign);
         sign
     }
 
     fn classify_vector<R: Representation>(
         &mut self,
         cone: &ConeCtx<N, R, Self::MatrixData<R>>,
-        vector: Vec<Self::Scalar>,
+        mut vector: Vec<Self::Scalar>,
         relaxed: bool,
         last_row: Option<Row>,
-        mut zero_set: <ZR as ZeroRepr>::Set,
+        zero_set: <ZR as ZeroRepr>::Set,
     ) -> Self::RayData {
-        let m = cone.matrix().row_count();
-        let mut negative_rows = self.halfspace.take_negative_rows(m);
-        let track_negatives = negative_rows.len() == m;
-
-        zero_set.ensure_domain(m);
-        zero_set.clear();
-        let mut zero_set_count = 0usize;
-        let mut feasible = true;
-        let mut weakly_feasible = true;
-        let mut first_infeasible_row = None;
-        let mut last_eval = None;
-
-        let matrix = cone.matrix().storage();
-        for &row_idx in cone.order_vector.iter() {
-            let row_vec = &matrix[row_idx];
-            let value = linalg::dot(row_vec, &vector);
-            if Some(row_idx) == last_row {
-                last_eval = Some(value.clone());
-            }
-            let sign = self.eps.sign(&value);
-            if track_negatives && sign == Sign::Negative {
-                negative_rows.insert(row_idx);
-            }
-            if sign == Sign::Zero
-                && let Some(id) = <ZR as ZeroRepr>::id_for_row(cone, row_idx)
-            {
-                zero_set.insert(id);
-                zero_set_count += 1;
-            }
-            let kind = cone.equality_kinds[row_idx];
-            let weak_violation = kind.weakly_violates_sign(sign, relaxed);
-            if weak_violation {
-                if first_infeasible_row.is_none() {
-                    first_infeasible_row = Some(row_idx);
-                }
-                weakly_feasible = false;
-            }
-            let strict_violation = kind.violates_sign(sign, relaxed);
-            if strict_violation {
-                feasible = false;
-            }
-        }
-
-        if relaxed {
-            feasible = weakly_feasible;
-        }
-
-        let zero_set_sig = zero_set.signature_u64();
-        let last_eval_row = last_row;
-        let last_eval = last_eval.unwrap_or_else(|| {
-            last_eval_row
-                .map(|row| cone.row_value(row, &vector))
-                .unwrap_or_else(N::zero)
-        });
-        let last_sign = self.eps.sign(&last_eval);
-
-        let ray_data = Ray {
+        let _ = self.normalize_vector(&mut vector);
+        self.build_ray_from_vector::<ZR, R>(
+            cone,
             vector,
-            class: RayClass {
-                zero_set,
-                zero_set_sig,
-                zero_set_count,
-                first_infeasible_row,
-                feasible,
-                weakly_feasible,
-                last_eval_row,
-                last_eval,
-                last_sign,
-            },
-        };
-
-        self.halfspace.wrap_ray_data(ray_data, negative_rows)
+            relaxed,
+            last_row,
+            zero_set,
+            false,
+            None,
+            None,
+        )
     }
 
     fn sign_sets_for_ray<R: Representation>(
@@ -592,9 +840,12 @@ impl<
                 negative_out.insert(row_idx);
                 continue;
             }
-            let row_vec = &matrix[row_idx];
-            let value = linalg::dot(row_vec, &ray_data.vector);
-            let sign = self.eps.sign(&value);
+            let sign = if let Some(sign) = ray_data.cached_row_sign(row_idx) {
+                sign
+            } else {
+                let value = linalg::dot(&matrix[row_idx], &ray_data.vector);
+                self.eps.sign(&value)
+            };
             if sign == Sign::Negative {
                 negative_out.insert(row_idx);
             }
@@ -615,9 +866,14 @@ impl<
         let mut first = None;
         let matrix = cone.matrix().storage();
         for &row_idx in cone.order_vector.iter() {
-            let row_vec = &matrix[row_idx];
-            let value = linalg::dot(row_vec, &ray_data.vector);
-            let sign = self.eps.sign(&value);
+            let sign = if let Some(sign) = ray_data.cached_row_sign(row_idx) {
+                sign
+            } else {
+                let value = linalg::dot(&matrix[row_idx], &ray_data.vector);
+                let sign = self.eps.sign(&value);
+                ray_data.set_cached_row_sign(row_idx, sign);
+                sign
+            };
             let kind = cone.equality_kinds[row_idx];
             if kind.weakly_violates_sign(sign, relaxed) {
                 first = Some(row_idx);
@@ -640,6 +896,11 @@ impl<
         let matrix = cone.matrix().storage();
         ray_data.class.zero_set.clear();
         let mut zero_set_count = 0usize;
+        if ray_data.row_signs.len() != cone.matrix().row_count() {
+            ray_data.row_signs.resize(cone.matrix().row_count(), None);
+        } else {
+            ray_data.row_signs.fill(None);
+        }
         ray_data.class.first_infeasible_row = None;
         ray_data.class.feasible = true;
         ray_data.class.weakly_feasible = true;
@@ -648,6 +909,7 @@ impl<
             let row_vec = &matrix[row_idx];
             let value = linalg::dot(row_vec, &ray_data.vector);
             let sign = self.eps.sign(&value);
+            ray_data.set_cached_row_sign(row_idx, sign);
             if Some(row_idx) == last_eval_row {
                 last_eval = value.clone();
                 last_sign = sign;
@@ -691,28 +953,41 @@ impl<
         zero_set: <ZR as ZeroRepr>::Set,
     ) -> Result<Self::RayData, <ZR as ZeroRepr>::Set> {
         let (_id1, ray1, _id2, ray2) = parents;
-        let val1 = if ray1.class.last_eval_row == Some(row) {
-            ray1.class.last_eval.clone()
-        } else {
-            let row_vec = &cone.matrix().storage()[row];
-            linalg::dot(row_vec, &ray1.vector)
+        let mut inherited_zero_set = zero_set;
+        inherited_zero_set.ensure_domain(cone.matrix().row_count());
+        inherited_zero_set.copy_from(ray1.zero_set());
+        inherited_zero_set.intersection_inplace(ray2.zero_set());
+        if let Some(id) = <ZR as ZeroRepr>::id_for_row(cone, row) {
+            inherited_zero_set.insert(id);
+        }
+        let (val1, val2) = match (
+            ray1.class.last_eval_row == Some(row),
+            ray2.class.last_eval_row == Some(row),
+        ) {
+            (true, true) => (ray1.class.last_eval.clone(), ray2.class.last_eval.clone()),
+            (true, false) => {
+                let row_vec = &cone.matrix().storage()[row];
+                (ray1.class.last_eval.clone(), linalg::dot(row_vec, &ray2.vector))
+            }
+            (false, true) => {
+                let row_vec = &cone.matrix().storage()[row];
+                (linalg::dot(row_vec, &ray1.vector), ray2.class.last_eval.clone())
+            }
+            (false, false) => {
+                let row_vec = &cone.matrix().storage()[row];
+                linalg::dot2(row_vec, &ray1.vector, &ray2.vector)
+            }
         };
-        let val2 = if ray2.class.last_eval_row == Some(row) {
-            ray2.class.last_eval.clone()
-        } else {
-            let row_vec = &cone.matrix().storage()[row];
-            linalg::dot(row_vec, &ray2.vector)
-        };
-
         let a1 = val1.abs();
         let a2 = val2.abs();
 
         let mut new_vector = self.take_vector(ray1.vector.len());
         linalg::lin_comb2_into(&mut new_vector, &ray1.vector, &a2, &ray2.vector, &a1);
         if !self.normalize_vector(&mut new_vector) {
-            return Err(zero_set);
+            return Err(inherited_zero_set);
         }
 
+        let mut can_reuse_row_signs = true;
         if P::ENABLED {
             <ZR as ZeroRepr>::fill_purify_expected_zero(
                 cone,
@@ -733,28 +1008,55 @@ impl<
                     }
                 }
                 new_vector = purified;
+                // Purification can alter nonzero signs away from inherited hints.
+                can_reuse_row_signs = false;
             }
         }
 
-        Ok(<Self as Umpire<N, ZR>>::classify_vector::<R>(
-            self,
+        if !can_reuse_row_signs {
+            return Ok(self.build_ray_from_vector::<ZR, R>(
+                cone,
+                new_vector,
+                relaxed,
+                Some(row),
+                inherited_zero_set,
+                true,
+                None,
+                None,
+            ));
+        }
+
+        let parent_hints = Some((ray1, ray2));
+        Ok(self.build_ray_from_vector::<ZR, R>(
             cone,
             new_vector,
             relaxed,
             Some(row),
-            zero_set,
+            inherited_zero_set,
+            true,
+            None,
+            parent_hints,
         ))
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{SinglePrecisionUmpire, SnapPurifier, UpcastingSnapPurifier};
+    use super::{SinglePrecisionUmpire, SnapPurifier, SpRay, UpcastingSnapPurifier};
     use crate::dd::ray::RayNoNegatives;
     use crate::dd::{ConeCtx, Ray, RayClass, RayId, SatSet, Umpire};
     use crate::matrix::LpMatrix;
     use calculo::num::{DynamicEpsilon, Epsilon, NoNormalizer, Num, Sign};
     use hullabaloo::types::{Inequality, InequalityKind};
+
+    fn wrap_sp_ray(inner: Ray<f64>, row_count: usize) -> RayNoNegatives<SpRay<f64>> {
+        RayNoNegatives {
+            inner: SpRay {
+                inner,
+                row_signs: vec![None; row_count],
+            },
+        }
+    }
 
     #[test]
     fn generate_new_ray_survives_no_normalizer() {
@@ -786,18 +1088,20 @@ mod tests {
             last_eval: 0.0,
             last_sign: Sign::Zero,
         };
-        let ray1 = RayNoNegatives {
-            inner: Ray {
+        let ray1 = wrap_sp_ray(
+            Ray {
                 vector: vec![1e-3, -1.0, 1.0],
                 class: class.clone(),
             },
-        };
-        let ray2 = RayNoNegatives {
-            inner: Ray {
+            cone.matrix.row_count(),
+        );
+        let ray2 = wrap_sp_ray(
+            Ray {
                 vector: vec![1e-3, 2.0, 1.0],
                 class,
             },
-        };
+            cone.matrix.row_count(),
+        );
 
         let mut umpire = SinglePrecisionUmpire::with_normalizer(eps, NoNormalizer);
         let new_ray = <_ as Umpire<f64>>::generate_new_ray::<Inequality>(
@@ -841,18 +1145,20 @@ mod tests {
             last_eval: 0.0,
             last_sign: Sign::Zero,
         };
-        let ray1 = RayNoNegatives {
-            inner: Ray {
+        let ray1 = wrap_sp_ray(
+            Ray {
                 vector: vec![1e-3, -1.0, 1.0],
                 class: class.clone(),
             },
-        };
-        let ray2 = RayNoNegatives {
-            inner: Ray {
+            cone.matrix.row_count(),
+        );
+        let ray2 = wrap_sp_ray(
+            Ray {
                 vector: vec![1e-3, 2.0, 1.0],
                 class,
             },
-        };
+            cone.matrix.row_count(),
+        );
 
         let mut umpire =
             SinglePrecisionUmpire::with_purifier(eps.clone(), NoNormalizer, SnapPurifier::new());
@@ -906,18 +1212,20 @@ mod tests {
             last_eval: 0.0,
             last_sign: Sign::Zero,
         };
-        let ray1 = RayNoNegatives {
-            inner: Ray {
+        let ray1 = wrap_sp_ray(
+            Ray {
                 vector: vec![1e-3, -1.0, 1.0],
                 class: class.clone(),
             },
-        };
-        let ray2 = RayNoNegatives {
-            inner: Ray {
+            cone.matrix.row_count(),
+        );
+        let ray2 = wrap_sp_ray(
+            Ray {
                 vector: vec![1e-3, 2.0, 1.0],
                 class,
             },
-        };
+            cone.matrix.row_count(),
+        );
 
         let mut umpire = SinglePrecisionUmpire::with_purifier(
             eps.clone(),

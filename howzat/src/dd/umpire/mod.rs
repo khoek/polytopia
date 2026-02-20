@@ -111,7 +111,7 @@ pub use adaptive_precision::AdaptivePrecisionUmpire;
 pub use int::IntUmpire;
 pub use multi_precision::MultiPrecisionUmpire;
 pub use single_precision::SinglePrecisionUmpire;
-pub use single_precision::{NoPurifier, Purifier, SnapPurifier, UpcastingSnapPurifier};
+pub use single_precision::{NoPurifier, Purifier, SnapPurifier, SpRay, UpcastingSnapPurifier};
 
 /// Opaque (umpire-owned) representation for the cone's working matrix.
 ///

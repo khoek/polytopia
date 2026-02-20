@@ -3,12 +3,12 @@ use std::hash::{BuildHasher, Hasher};
 
 use crate::dd::Umpire;
 use crate::dd::ray::{RayData as _, RayId};
-use crate::dd::sat::SatSet;
+use crate::dd::sat::{SatRowId, SatSet};
 use crate::dd::state::ConeEngine;
 use crate::dd::zero::ZeroSet;
 use crate::dd::zero::ZeroRepr;
 use calculo::num::Num;
-use hullabaloo::types::{Representation, RowSet};
+use hullabaloo::types::{Representation, Row, RowSet};
 
 #[derive(Clone, Copy, Debug, Default)]
 struct BuildIdentityHasher;
@@ -465,6 +465,7 @@ pub trait RayIncidenceIndex<ZS: ZeroSet>: Clone + std::fmt::Debug + Default {
     fn clear(&mut self);
     fn register(&mut self, id: RayId, zero_set: &ZS, domain_size: usize);
     fn unregister(&mut self, id: RayId, zero_set: &ZS, domain_size: usize);
+    fn add_zero_row_membership(&mut self, id: RayId, row_id: ZS::Id, domain_size: usize);
 
     fn candidate_contains_face(
         &mut self,
@@ -505,6 +506,16 @@ impl RayIncidenceIndex<RowSet> for RowRayIncidenceIndex {
     #[inline(always)]
     fn unregister(&mut self, id: RayId, zero_set: &RowSet, domain_size: usize) {
         RowRayIncidenceIndex::unregister(self, id, zero_set, domain_size);
+    }
+
+    #[inline(always)]
+    fn add_zero_row_membership(&mut self, id: RayId, row_id: Row, domain_size: usize) {
+        self.ensure_rows(domain_size);
+        self.ensure_ray_capacity(id.as_index() + 1);
+        let row_index = row_id;
+        if let Some(row_set) = self.by_row.get_mut(row_index) {
+            row_set.insert(id.as_index());
+        }
     }
 
     #[inline(always)]
@@ -558,6 +569,16 @@ impl RayIncidenceIndex<SatSet> for SatRayIncidenceIndex {
     }
 
     #[inline(always)]
+    fn add_zero_row_membership(&mut self, id: RayId, row_id: SatRowId, domain_size: usize) {
+        self.ensure_rows(domain_size);
+        self.ensure_ray_capacity(id.as_index() + 1);
+        let row_index = row_id.as_index();
+        if let Some(row_set) = self.by_row.get_mut(row_index) {
+            row_set.insert(id.as_index());
+        }
+    }
+
+    #[inline(always)]
     fn candidate_contains_face(
         &mut self,
         face: &SatSet,
@@ -593,13 +614,16 @@ where
 {
     pub(crate) fn clear_ray_indices(&mut self) {
         self.core.ray_index.clear();
-        if !self.core.options.assumes_nondegeneracy() {
+        if !self.core.options.assumes_nondegeneracy()
+            && ZR::USE_INCIDENCE_INDEX_FOR_CANDIDATE_TEST
+        {
             self.core.ray_incidence.clear();
         }
     }
 
     pub(crate) fn register_ray_id(&mut self, id: RayId) {
-        let use_incidence = !self.core.options.assumes_nondegeneracy();
+        let use_incidence = !self.core.options.assumes_nondegeneracy()
+            && ZR::USE_INCIDENCE_INDEX_FOR_CANDIDATE_TEST;
         let (index, incidence, graph) = (
             &mut self.core.ray_index,
             &mut self.core.ray_incidence,
@@ -615,7 +639,8 @@ where
     }
 
     pub(crate) fn unregister_ray_id(&mut self, id: RayId) {
-        let use_incidence = !self.core.options.assumes_nondegeneracy();
+        let use_incidence = !self.core.options.assumes_nondegeneracy()
+            && ZR::USE_INCIDENCE_INDEX_FOR_CANDIDATE_TEST;
         let (index, incidence, graph) = (
             &mut self.core.ray_index,
             &mut self.core.ray_incidence,

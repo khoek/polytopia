@@ -112,6 +112,39 @@ where
     }
 
     #[inline(always)]
+    fn insert_added_halfspace_zero(&mut self, row: Row) {
+        if let Some(id) = ZR::id_for_row(&self.core.ctx, row) {
+            if !self.core.added_halfspaces_zero.contains(id) {
+                self.core.added_halfspaces_zero.insert(id);
+                self.core.added_halfspaces_zero_size += 1;
+            }
+        }
+    }
+
+    fn rebuild_added_halfspaces_zero(&mut self) {
+        self.core.added_halfspaces_zero.clear();
+        self.core.added_halfspaces_zero_size = 0;
+        let equality_rows: Vec<Row> = self
+            .core
+            .equality_set
+            .iter()
+            .map(|row| row.as_index())
+            .collect();
+        for row in equality_rows {
+            self.insert_added_halfspace_zero(row);
+        }
+        let rows: Vec<Row> = self
+            .core
+            .added_halfspaces
+            .iter()
+            .map(|row| row.as_index())
+            .collect();
+        for row in rows {
+            self.insert_added_halfspace_zero(row);
+        }
+    }
+
+    #[inline(always)]
     fn recycle_zero_set_from_ray_data(&mut self, ray_data: &mut U::RayData) {
         let mut set = ZR::empty_set(0);
         std::mem::swap(ray_data.zero_set_mut(), &mut set);
@@ -212,19 +245,6 @@ where
             return Ok(());
         }
 
-        let (new_id, inserted) = ZR::ensure_id_for_row(&mut self.core.ctx, row);
-        if inserted {
-            for &ray_id in partition_view.zero {
-                self.unregister_ray_id(ray_id);
-                if let Some(ray_data) = self.ray_mut(ray_id) {
-                    ray_data.zero_set_mut().insert(new_id);
-                    ray_data.set_zero_set_signature(ray_data.zero_set().signature_u64());
-                    ray_data.set_zero_set_count(ray_data.zero_set_count() + 1);
-                }
-                self.register_ray_id(ray_id);
-            }
-        }
-
         if partition_view.negative.is_empty() {
             self.core.weakly_added_halfspaces.insert(row);
             self.sync_iteration_with_added();
@@ -236,19 +256,97 @@ where
             return Ok(());
         }
 
+        let (new_id, inserted) = ZR::ensure_id_for_row(&mut self.core.ctx, row);
+        if inserted {
+            let use_incidence = !self.core.options.assumes_nondegeneracy()
+                && ZR::USE_INCIDENCE_INDEX_FOR_CANDIDATE_TEST;
+            let domain = ZR::domain_size(&self.core.ctx);
+            for &ray_id in partition_view.zero {
+                let Some(old_sig) = self.ray(ray_id).map(|ray_data| ray_data.zero_set_signature())
+                else {
+                    continue;
+                };
+                self.core.ray_index.unregister(ray_id, old_sig);
+                let Some(new_sig) = self.ray_mut(ray_id).map(|ray_data| {
+                    ray_data.zero_set_mut().insert(new_id);
+                    ray_data.set_zero_set_count(ray_data.zero_set_count() + 1);
+                    let sig = ray_data.zero_set().signature_u64();
+                    ray_data.set_zero_set_signature(sig);
+                    sig
+                }) else {
+                    continue;
+                };
+                self.core.ray_index.register(ray_id, new_sig);
+                if use_incidence {
+                    self.core
+                        .ray_incidence
+                        .add_zero_row_membership(ray_id, new_id, domain);
+                }
+            }
+        }
+        self.insert_added_halfspace_zero(row);
+
         self.with_active_ray_ids(|state, adjacency_candidates| {
-            for &pos in partition_view.positive {
-                for &neg in partition_view.negative {
-                    if !state.check_adjacency(neg, pos, adjacency_candidates) {
-                        continue;
+            let use_bitset = ZR::USE_INCIDENCE_INDEX_FOR_CANDIDATE_TEST && {
+                let ray_capacity = state.core.ray_incidence.ray_capacity();
+                adjacency_candidates
+                    .iter()
+                    .all(|id| id.as_index() < ray_capacity)
+            };
+
+            if use_bitset {
+                let ray_capacity = state.core.ray_incidence.ray_capacity();
+                let mut candidate_set =
+                    std::mem::replace(&mut state.core.candidate_ray_set, RowSet::new(0));
+                if candidate_set.len() != ray_capacity {
+                    candidate_set.resize(ray_capacity);
+                }
+                candidate_set.clear();
+                for &rid in adjacency_candidates {
+                    candidate_set.insert(rid.as_index());
+                }
+                for &pos in partition_view.positive {
+                    for &neg in partition_view.negative {
+                        let need = state.core.ray_incidence.ray_capacity();
+                        if candidate_set.len() != need {
+                            candidate_set.resize(need);
+                        }
+                        if state
+                            .check_adjacency_common_with_candidates(
+                                neg,
+                                pos,
+                                DegeneracyCandidates::BitSet(&candidate_set),
+                            )
+                            .is_none()
+                        {
+                            continue;
+                        }
+                        let _ = state.create_new_ray(neg, pos, row);
                     }
-                    let _ = state.create_new_ray(neg, pos, row);
+                }
+                state.core.candidate_ray_set = candidate_set;
+            } else {
+                for &pos in partition_view.positive {
+                    for &neg in partition_view.negative {
+                        if state
+                            .check_adjacency_common_with_candidates(
+                                neg,
+                                pos,
+                                DegeneracyCandidates::Slice(adjacency_candidates),
+                            )
+                            .is_none()
+                        {
+                            continue;
+                        }
+                        let _ = state.create_new_ray(neg, pos, row);
+                    }
                 }
             }
         });
         self.delete_negative_rays(partition_view);
-        self.prune_recent_rays();
         self.core.added_halfspaces.insert(row);
+        self.insert_added_halfspace_zero(row);
+        self.prune_recent_rays();
         self.core.weakly_added_halfspaces.insert(row);
         self.sync_iteration_with_added();
         self.sync_tableau_flag_for_row(row);
@@ -268,11 +366,6 @@ where
         self.umpire.reset_infeasible_counts(self.row_count());
         self.core.tableau.tableau_nonbasic = Self::init_nonbasic(self.col_count());
         self.core.tableau.tableau_basic_col_for_row = vec![-1; self.row_count()];
-        if matches!(R::KIND, RepresentationKind::Generator) {
-            for row in 0..self.row_count() {
-                let _ = ZR::ensure_id_for_row(&mut self.core.ctx, row);
-            }
-        }
         self.add_artificial_ray();
         self.clear_ray_indices();
 
@@ -289,6 +382,7 @@ where
             let row = row_id.as_index();
             let _ = ZR::ensure_id_for_row(&mut self.core.ctx, row);
         }
+        self.rebuild_added_halfspaces_zero();
         self.sync_tableau_flags();
         let initial = self.core.initial_halfspaces.clone();
         self.umpire.bump_priority_rows(&mut self.core.ctx, &initial);
@@ -428,12 +522,18 @@ where
         self.core.partitions = partition;
     }
 
-    pub(crate) fn check_adjacency(&mut self, r1: RayId, r2: RayId, candidates: &[RayId]) -> bool {
+    fn check_adjacency_common_with_candidates(
+        &mut self,
+        r1: RayId,
+        r2: RayId,
+        candidates: DegeneracyCandidates<'_>,
+    ) -> Option<usize> {
+        let required = self.adjacency_dimension().saturating_sub(2);
         let (ray1_zero, ray1_zero_count, ray2_zero, ray2_zero_count) = {
             let ray_graph = &self.core.ray_graph;
             let (Some(ray1), Some(ray2)) = (ray_graph.ray_data(r1), ray_graph.ray_data(r2))
             else {
-                return false;
+                return None;
             };
             (
                 ray1.zero_set(),
@@ -443,34 +543,130 @@ where
             )
         };
 
-        self.core.adj_face.copy_from(ray1_zero);
-        let common = self.core.adj_face.intersection_inplace_and_count(ray2_zero);
+        let domain = ZR::domain_size(&self.core.ctx);
+        let added_domain_full = self.core.added_halfspaces_zero_size == domain;
+        let common = if added_domain_full {
+            ray1_zero.count_intersection(ray2_zero)
+        } else {
+            self.core.adj_face.copy_from(ray1_zero);
+            self.core
+                .adj_face
+                .intersection_two_inplace_and_count(ray2_zero, &self.core.added_halfspaces_zero)
+        };
 
-        let required = self.adjacency_dimension().saturating_sub(2);
         if common < required {
-            return false;
+            return None;
         }
 
         if self.core.options.assumes_nondegeneracy() {
-            return true;
+            return Some(common);
         }
 
-        let min_parent_saturators = ray1_zero_count.min(ray2_zero_count);
-        if common == required && min_parent_saturators == required + 1 {
-            return true;
+        let min_parent_saturators = if added_domain_full {
+            ray1_zero_count.min(ray2_zero_count)
+        } else {
+            ray1_zero
+                .count_intersection(&self.core.added_halfspaces_zero)
+                .min(ray2_zero.count_intersection(&self.core.added_halfspaces_zero))
+        };
+        if min_parent_saturators == common.saturating_add(1) {
+            return Some(common);
         }
 
-        let domain = ZR::domain_size(&self.core.ctx);
-        !self
-            .core
-            .ray_incidence
-            .candidate_contains_face(
-                &self.core.adj_face,
-                domain,
-                candidates,
-                r1,
-                r2,
-            )
+        if added_domain_full {
+            self.core.adj_face.copy_from(ray1_zero);
+            self.core.adj_face.intersection_inplace(ray2_zero);
+        }
+
+        let contains = if ZR::USE_INCIDENCE_INDEX_FOR_CANDIDATE_TEST {
+            match candidates {
+                DegeneracyCandidates::Slice(indices) => self.core.ray_incidence.candidate_contains_face(
+                    &self.core.adj_face,
+                    domain,
+                    indices,
+                    r1,
+                    r2,
+                ),
+                DegeneracyCandidates::BitSet(set) => self.core.ray_incidence.candidate_set_contains_face(
+                    &self.core.adj_face,
+                    domain,
+                    set,
+                    r1,
+                    r2,
+                ),
+            }
+        } else {
+            self.candidate_contains_face_by_subset(&self.core.adj_face, common, candidates, r1, r2)
+        };
+        if contains {
+            None
+        } else {
+            Some(common)
+        }
+    }
+
+    #[inline]
+    fn candidate_contains_face_by_subset(
+        &self,
+        face: &ZR::Set,
+        face_cardinality: usize,
+        candidates: DegeneracyCandidates<'_>,
+        exclude_a: RayId,
+        exclude_b: RayId,
+    ) -> bool {
+        match candidates {
+            DegeneracyCandidates::Slice(indices) => {
+                for &id in indices {
+                    if id == exclude_a || id == exclude_b {
+                        continue;
+                    }
+                    let Some(ray) = self.ray(id) else {
+                        continue;
+                    };
+                    if ray.zero_set_count() < face_cardinality {
+                        continue;
+                    }
+                    let candidate_zero = ray.zero_set();
+                    if face.iter().all(|row_id| candidate_zero.contains(row_id)) {
+                        return true;
+                    }
+                }
+                false
+            }
+            DegeneracyCandidates::BitSet(set) => {
+                for rid in set.iter() {
+                    let id = RayId::from(rid.as_index());
+                    if id == exclude_a || id == exclude_b {
+                        continue;
+                    }
+                    let Some(ray) = self.ray(id) else {
+                        continue;
+                    };
+                    if ray.zero_set_count() < face_cardinality {
+                        continue;
+                    }
+                    let candidate_zero = ray.zero_set();
+                    if face.iter().all(|row_id| candidate_zero.contains(row_id)) {
+                        return true;
+                    }
+                }
+                false
+            }
+        }
+    }
+
+    fn check_adjacency_common(
+        &mut self,
+        r1: RayId,
+        r2: RayId,
+        candidates: &[RayId],
+    ) -> Option<usize> {
+        self.check_adjacency_common_with_candidates(r1, r2, DegeneracyCandidates::Slice(candidates))
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn check_adjacency(&mut self, r1: RayId, r2: RayId, candidates: &[RayId]) -> bool {
+        self.check_adjacency_common(r1, r2, candidates).is_some()
     }
 
     #[allow(dead_code)]
@@ -743,7 +939,12 @@ where
         partition
     }
 
-    pub(crate) fn create_new_ray(&mut self, r1: RayId, r2: RayId, row: Row) -> Option<RayId> {
+    pub(crate) fn create_new_ray(
+        &mut self,
+        r1: RayId,
+        r2: RayId,
+        row: Row,
+    ) -> Option<RayId> {
         if r1 == r2 {
             return None;
         }
@@ -979,6 +1180,7 @@ where
         self.delete_negative_rays(partition_view);
         self.prune_recent_rays();
         self.core.added_halfspaces.insert(row);
+        self.insert_added_halfspace_zero(row);
         self.core.weakly_added_halfspaces.insert(row);
         self.sync_iteration_with_added();
         self.sync_tableau_flag_for_row(row);

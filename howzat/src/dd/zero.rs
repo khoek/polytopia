@@ -27,6 +27,21 @@ pub trait ZeroSet: Clone + std::fmt::Debug + Eq {
         self.cardinality()
     }
 
+    #[inline(always)]
+    fn intersection_two_inplace_and_count(&mut self, other: &Self, mask: &Self) -> usize {
+        self.intersection_inplace(other);
+        self.intersection_inplace_and_count(mask)
+    }
+
+    fn subset_of(&self, other: &Self) -> bool;
+
+    #[inline(always)]
+    fn count_intersection(&self, other: &Self) -> usize {
+        let mut tmp = self.clone();
+        tmp.intersection_inplace(other);
+        tmp.cardinality()
+    }
+
     fn cardinality(&self) -> usize;
     fn cardinality_at_least(&self, target: usize) -> bool;
     fn signature_u64(&self) -> u64;
@@ -80,8 +95,18 @@ impl ZeroSet for RowSet {
     }
 
     #[inline(always)]
+    fn subset_of(&self, other: &Self) -> bool {
+        RowSet::subset_of(self, other)
+    }
+
+    #[inline(always)]
     fn cardinality(&self) -> usize {
         RowSet::cardinality(self)
+    }
+
+    #[inline(always)]
+    fn count_intersection(&self, other: &Self) -> usize {
+        RowSet::count_intersection(self, other)
     }
 
     #[inline(always)]
@@ -144,8 +169,23 @@ impl ZeroSet for SatSet {
     }
 
     #[inline(always)]
+    fn subset_of(&self, other: &Self) -> bool {
+        SatSet::subset_of(self, other)
+    }
+
+    #[inline(always)]
+    fn intersection_two_inplace_and_count(&mut self, other: &Self, mask: &Self) -> usize {
+        SatSet::intersection_two_inplace_and_count(self, other, mask)
+    }
+
+    #[inline(always)]
     fn cardinality(&self) -> usize {
         SatSet::cardinality(self)
+    }
+
+    #[inline(always)]
+    fn count_intersection(&self, other: &Self) -> usize {
+        SatSet::count_intersection(self, other)
     }
 
     #[inline(always)]
@@ -174,6 +214,7 @@ pub struct SatRepr;
 pub trait ZeroRepr: Clone + std::fmt::Debug + Default + 'static {
     type Set: ZeroSet;
     type IncidenceIndex: RayIncidenceIndex<Self::Set>;
+    const USE_INCIDENCE_INDEX_FOR_CANDIDATE_TEST: bool;
 
     fn empty_set(row_count: Row) -> Self::Set;
 
@@ -213,6 +254,7 @@ pub trait ZeroRepr: Clone + std::fmt::Debug + Default + 'static {
 impl ZeroRepr for RowRepr {
     type Set = RowSet;
     type IncidenceIndex = RowRayIncidenceIndex;
+    const USE_INCIDENCE_INDEX_FOR_CANDIDATE_TEST: bool = true;
 
     #[inline(always)]
     fn empty_set(row_count: Row) -> Self::Set {
@@ -284,6 +326,7 @@ impl ZeroRepr for RowRepr {
 impl ZeroRepr for SatRepr {
     type Set = SatSet;
     type IncidenceIndex = SatRayIncidenceIndex;
+    const USE_INCIDENCE_INDEX_FOR_CANDIDATE_TEST: bool = false;
 
     #[inline(always)]
     fn empty_set(_row_count: Row) -> Self::Set {

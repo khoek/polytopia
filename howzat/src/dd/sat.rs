@@ -111,12 +111,60 @@ impl SatSet {
     }
 
     #[inline]
+    pub(crate) fn intersection_two_inplace_and_count(
+        &mut self,
+        other: &Self,
+        mask: &Self,
+    ) -> usize {
+        let min_len = self.words.len().min(other.words.len().min(mask.words.len()));
+        let mut count = 0usize;
+        for i in 0..min_len {
+            let word = self.words[i] & other.words[i] & mask.words[i];
+            self.words[i] = word;
+            count += word.count_ones() as usize;
+        }
+        for i in min_len..self.words.len() {
+            self.words[i] = 0;
+        }
+        self.trim();
+        count
+    }
+
+    #[inline]
     pub(crate) fn cardinality(&self) -> usize {
         let mut count = 0usize;
         for &word in &self.words {
             count += word.count_ones() as usize;
         }
         count
+    }
+
+    #[inline]
+    pub(crate) fn count_intersection(&self, other: &Self) -> usize {
+        let min_len = self.words.len().min(other.words.len());
+        let mut count = 0usize;
+        for i in 0..min_len {
+            count += (self.words[i] & other.words[i]).count_ones() as usize;
+        }
+        count
+    }
+
+    #[inline]
+    pub(crate) fn subset_of(&self, other: &Self) -> bool {
+        let min_len = self.words.len().min(other.words.len());
+        for i in 0..min_len {
+            let a = self.words[i];
+            let b = other.words[i];
+            if (a & !b) != 0 {
+                return false;
+            }
+        }
+        for i in min_len..self.words.len() {
+            if self.words[i] != 0 {
+                return false;
+            }
+        }
+        true
     }
 
     #[inline]

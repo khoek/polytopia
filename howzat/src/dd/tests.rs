@@ -1,11 +1,21 @@
 use super::*;
 use crate::dd::Umpire;
 use crate::dd::ray::{EdgeTarget, RayNoNegatives};
+use crate::dd::umpire::SpRay;
 use crate::dd::SatSet;
 use crate::matrix::LpMatrix;
 use calculo::num::{Num, Sign};
 use hullabaloo::types::{ComputationStatus, Inequality, InequalityKind};
 use std::cmp::Ordering;
+
+fn wrap_sp_ray(ray: Ray<f64>, row_count: usize) -> RayNoNegatives<SpRay<f64>> {
+    RayNoNegatives {
+        inner: SpRay {
+            inner: ray,
+            row_signs: vec![None; row_count],
+        },
+    }
+}
 
 #[test]
 fn column_reduce_keeps_cost_vector_alignment() {
@@ -96,11 +106,11 @@ fn evaluate_partitions_floor_first_infeasible_for_nonnegative_rays() {
     let zero_id = cone
         .core
         .ray_graph
-        .insert_active(RayNoNegatives { inner: zero_ray });
+        .insert_active(wrap_sp_ray(zero_ray, row_count));
     let pos_id = cone
         .core
         .ray_graph
-        .insert_active(RayNoNegatives { inner: pos_ray });
+        .insert_active(wrap_sp_ray(pos_ray, row_count));
     cone.core.ray_graph.set_order(vec![zero_id, pos_id]);
     let partition = cone.evaluate_row_partition(2);
     assert!(partition.negative.is_empty());
@@ -172,11 +182,11 @@ fn refresh_preserves_edges_after_flooring_first_infeasible() {
     let ray_one_id = cone
         .core
         .ray_graph
-        .insert_active(RayNoNegatives { inner: ray_one });
+        .insert_active(wrap_sp_ray(ray_one, row_count));
     let ray_two_id = cone
         .core
         .ray_graph
-        .insert_active(RayNoNegatives { inner: ray_two });
+        .insert_active(wrap_sp_ray(ray_two, row_count));
     cone.core.ray_graph.set_order(vec![ray_one_id, ray_two_id]);
     let iteration = cone.iteration();
     cone.core.ray_graph.queue_edge(
@@ -234,6 +244,76 @@ fn assume_nondegenerate_mode_does_not_panic_when_processing_edges() {
 }
 
 #[test]
+fn adjacency_uses_added_halfspaces_face() {
+    // Regression for dynamic DD adjacency: the face must be intersected with AddedHalfspaces
+    // before subset checks (cddlib semantics).
+    let matrix = LpMatrix::<f64, Inequality>::new(4, 4);
+    let kinds = vec![InequalityKind::Inequality; 4];
+    let mut cone = Cone::<_, _>::new(matrix, kinds, ConeOptions::default())
+        .unwrap()
+        .into_basis_prep(f64::default_eps());
+
+    for row in 0..cone.row_count() {
+        cone.core.ctx.assign_sat_id_for_row(row);
+    }
+
+    let sat_ids: Vec<_> = (0..cone.row_count())
+        .map(|row| cone.core.ctx.sat_id_for_row(row).unwrap())
+        .collect();
+    let col_count = cone.col_count();
+    let row_count = cone.row_count();
+    let mk_ray = |rows: &[usize]| {
+        let mut zero_set = SatSet::default();
+        for &row in rows {
+            zero_set.insert(sat_ids[row]);
+        }
+        let zero_set_sig = zero_set.signature_u64();
+        wrap_sp_ray(
+            Ray {
+                vector: vec![0.0; col_count],
+                class: RayClass {
+                    zero_set_count: rows.len(),
+                    zero_set,
+                    zero_set_sig,
+                    first_infeasible_row: None,
+                    feasible: true,
+                    weakly_feasible: true,
+                    last_eval_row: None,
+                    last_eval: 0.0,
+                    last_sign: Sign::Zero,
+                },
+            },
+            row_count,
+        )
+    };
+
+    cone.core.ray_graph.reset(row_count);
+    cone.clear_ray_indices();
+
+    let r1 = cone.core.ray_graph.insert_active(mk_ray(&[0, 1, 2]));
+    let r2 = cone.core.ray_graph.insert_active(mk_ray(&[0, 1, 2]));
+    let witness = cone.core.ray_graph.insert_active(mk_ray(&[0, 1]));
+    cone.core.ray_graph.set_order(vec![r1, r2, witness]);
+    cone.register_ray_id(r1);
+    cone.register_ray_id(r2);
+    cone.register_ray_id(witness);
+
+    cone.core.added_halfspaces.clear();
+    cone.core.added_halfspaces.insert(0);
+    cone.core.added_halfspaces.insert(1);
+    cone.core.added_halfspaces_zero.clear();
+    cone.core.added_halfspaces_zero.insert(sat_ids[0]);
+    cone.core.added_halfspaces_zero.insert(sat_ids[1]);
+    cone.core.added_halfspaces_zero_size = 2;
+
+    let adjacent = cone.check_adjacency(r1, r2, &[r1, r2, witness]);
+    assert!(
+        !adjacent,
+        "parents must be non-adjacent when another ray saturates all added face rows"
+    );
+}
+
+#[test]
 fn first_infeasible_at_zero_is_not_overwritten() {
     let matrix = LpMatrix::<f64, Inequality>::from_rows(vec![vec![1.0], vec![1.0]]);
     let kinds = vec![InequalityKind::Inequality; 2];
@@ -266,7 +346,7 @@ fn first_infeasible_at_zero_is_not_overwritten() {
     let ray_id = cone
         .core
         .ray_graph
-        .insert_active(RayNoNegatives { inner: ray });
+        .insert_active(wrap_sp_ray(ray, row_count));
     cone.core.ray_graph.set_order(vec![ray_id]);
 
     let partition = cone.evaluate_row_partition(1);
@@ -332,11 +412,11 @@ fn edge_target_iteration_accepts_zero_first_infeasible() {
     let retained = cone
         .core
         .ray_graph
-        .insert_active(RayNoNegatives { inner: ray_a });
+        .insert_active(wrap_sp_ray(ray_a, row_count));
     let removed = cone
         .core
         .ray_graph
-        .insert_active(RayNoNegatives { inner: ray_b });
+        .insert_active(wrap_sp_ray(ray_b, row_count));
     cone.core.ray_graph.set_order(vec![retained, removed]);
 
     let target = cone.edge_target_iteration(&AdjacencyEdge { retained, removed });
